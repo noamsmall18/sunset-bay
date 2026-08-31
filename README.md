@@ -8,10 +8,16 @@ playable if the optional `assets/` folder is unavailable.
 ## Run it
 
 ```bash
-cd ~/sunset-bay
+git clone https://github.com/noamsmall18/sunset-bay.git
+cd sunset-bay
 node build.js                 # writes dist/sunset-bay.html and index.html
 python3 -m http.server 8123   # then open http://127.0.0.1:8123/index.html
 ```
+
+`dist/` is not in the repository - it is produced entirely from `src/`,
+`assets/` and `vendor/` by `build.js`, and a clean clone rebuilds it
+byte for byte. Nothing else is generated: everything the game needs to
+build is tracked.
 
 `index.html` is the dev page: each module loads as its own `<script>` so stack
 traces point at real files and lines. `dist/sunset-bay.html` is the shipped
