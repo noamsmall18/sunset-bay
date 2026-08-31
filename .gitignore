@@ -1,0 +1,15 @@
+# Everything in dist/ is produced by `node build.js` from src/ + assets/.
+# dist/assets/ in particular is a byte-for-byte copy of assets/, so committing
+# it would double the repository for no gain.
+dist/
+
+# macOS
+.DS_Store
+._*
+
+# editors / tooling
+.vscode/
+.idea/
+*.swp
+node_modules/
+npm-debug.log*
