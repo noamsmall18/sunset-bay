@@ -144,6 +144,7 @@
     if (SB.Player) this.player = new SB.Player(this);
     if (SB.Missions) this.missions = new SB.Missions(this);
     if (SB.Progress) this.progress = new SB.Progress(this);
+    if (SB.Garage) this.garage = new SB.Garage(this);
     if (SB.HUD) this.hud = new SB.HUD(this);
     if (this.player) this.player.spawn();
     if (SB.Save) SB.Save.attach(this);
@@ -208,6 +209,7 @@
     if (this.combat) this.combat.fixed(dt);
     if (this.missions) this.missions.fixed(dt);
     if (this.progress) this.progress.fixed(dt);
+    if (this.garage) this.garage.fixed(dt);
     if (SB.Save && SB.Save.tick) SB.Save.tick(dt);
   };
 
@@ -739,6 +741,84 @@
         this.progress.rank = this.progress.rankInfo().rank;
       }
 
+      // ---- garage: store, upgrade, retrieve ---------------------------------
+      // The retrieval bug this catches is specific and easy to reintroduce:
+      // Vehicle.placeAt resolves its height from 50 m up, which under a
+      // three-deck car park finds the ROOF, so a car fetched from the garage
+      // materialised three floors above its bay.
+      if (this.garage && this.garage.bay && this.traffic && this.progress) {
+        var ga = this.garage;
+        var keptXp = this.progress.xp, keptUnlocked = this.progress.unlocked;
+        this.progress.xp = 999999;
+        this.progress.rank = this.progress.rankInfo().rank;
+        this.progress.unlocked = {};
+        this.progress.refreshUnlocks();
+        var keptSlots = ga.slots.slice(0);
+        ga.slots.length = 0;
+
+        var probeCar = this.traffic.spawnParked('sedan', ga.bay.x, ga.bay.z, 0, 0x1d3f77);
+        var baseTorque = SB.VehicleSpecs.sedan.torque;
+        if (!ga.store(probeCar)) {
+          issues.push('garage refused to store a car into an empty garage');
+        } else {
+          ga.recycleBody(probeCar);
+          ga.slots[0].upgrades.engine = 1;
+          var back = ga.retrieve(0);
+          if (!back) {
+            issues.push('garage could not retrieve a stored car');
+          } else {
+            if (Math.abs(back.pos.y - ga.bay.y) > 1.5) {
+              issues.push('garage returned a car at y=' + back.pos.y.toFixed(2) +
+                ' but the bay floor is y=' + ga.bay.y.toFixed(2));
+            }
+            if (!(back.spec.torque > baseTorque)) {
+              issues.push('garage upgrade did not reach the vehicle spec');
+            }
+            if (SB.VehicleSpecs.sedan.torque !== baseTorque) {
+              issues.push('garage upgrade leaked into the shared vehicle spec');
+            }
+            ga.recycleBody(back);
+          }
+        }
+        ga.slots.length = 0;
+        for (var gs = 0; gs < keptSlots.length; gs++) ga.slots.push(keptSlots[gs]);
+        this.progress.xp = keptXp;
+        this.progress.unlocked = keptUnlocked;
+        this.progress.rank = this.progress.rankInfo().rank;
+      }
+
+      // ---- damage: dents must be private to the car that took them ---------
+      if (this.traffic) {
+        var dmgA = this.traffic.spawnParked('sedan', 0, 0, 0, 0x8f1f24);
+        var dmgB = this.traffic.spawnParked('sedan', 6, 0, 0, 0x1d3f77);
+        if (dmgA.body.geometry !== dmgB.body.geometry) {
+          issues.push('undamaged cars of one class do not share their geometry');
+        }
+        dmgA.damage(260, 'world', 1, 0, dmgA.pos.x + 1.6, dmgA.pos.y + 0.4, dmgA.pos.z);
+        if (dmgA.body.geometry === dmgB.body.geometry) {
+          issues.push('a damaged car dented the geometry shared by its whole class');
+        }
+        if (!dmgA._dents) issues.push('a hard impact left no dent');
+        var pristineA = dmgA._pristine, liveA = dmgA.body.geometry.attributes.position.array;
+        var bent = 0;
+        for (var vi = 0; vi < liveA.length; vi++) {
+          if (Math.abs(liveA[vi] - pristineA[vi]) > 1e-5) bent++;
+        }
+        if (!bent) issues.push('dent moved no vertices');
+        dmgA.repairBody();
+        var stillBent = 0;
+        var afterA = dmgA.body.geometry.attributes.position.array;
+        for (vi = 0; vi < afterA.length; vi++) {
+          if (Math.abs(afterA[vi] - pristineA[vi]) > 1e-5) stillBent++;
+        }
+        if (stillBent) issues.push('repairBody left ' + stillBent + ' vertices bent');
+        this.traffic.recycle(dmgA);
+        if (dmgA.body.geometry !== dmgA._sharedGeo) {
+          issues.push('a recycled car kept its private damaged geometry');
+        }
+        this.traffic.recycle(dmgB);
+      }
+
       // ---- save: capture and re-apply must be lossless ---------------------
       if (SB.Save && this.player) {
         var snap = SB.Save.capture(this);
@@ -769,8 +849,8 @@
         this.city.buildings.length + ' buildings, ' + this.interiors.doors.length +
         ' building doors, ' + this.interiors.rooms.length + ' unique furnished interiors, ' +
         generatedRooms + ' generated variants, ' + hotspotTotal + ' interior hotspots, ' +
-        'multi-level/bank/vehicle/car-stability/boat/plane/heli/routing/contract/save ' +
-        'probes clean)');
+        'multi-level/bank/vehicle/car-stability/boat/plane/heli/routing/contract/' +
+        'garage/damage/save probes clean)');
     }
     this.selfTestIssues = issues;
   };

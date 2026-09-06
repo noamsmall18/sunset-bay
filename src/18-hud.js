@@ -288,7 +288,10 @@
       }
     }
     var authored = [
-      { id: 'garage', name: 'Car park', block: L.landmarks && L.landmarks.garage, color: 0xf2c14e, icon: 'P' },
+      // Once the garage is unlocked the car park is not just a structure to
+      // drive up any more, it is where your cars live. Say so on the map.
+      { id: 'garage', name: (g.garage && g.garage.available()) ? 'Your garage' : 'Car park',
+        block: L.landmarks && L.landmarks.garage, color: 0xf2c14e, icon: 'P' },
       { id: 'stadium', name: 'Stadium', block: L.landmarks && L.landmarks.stadium, color: 0xff7a66, icon: '◆' },
       { id: 'park', name: 'Central park', block: L.landmarks && L.landmarks.park, color: 0x66e07a, icon: '✚' }
     ];
@@ -891,6 +894,8 @@
       text = g.rooftops.prompt; key = 'E';
     } else if (p.boatInteriorPrompt) {
       text = p.boatInteriorPrompt.text; key = p.boatInteriorPrompt.key;
+    } else if (g.garage && g.garage.prompt) {
+      text = g.garage.prompt; key = 'E';
     } else if (p.mode === 'foot' && p.nearVehicle) {
       text = 'Enter ' + p.nearVehicle.name; key = 'F';
     } else if (inCraft(p)) {
@@ -1642,6 +1647,59 @@
     this.game.uiBlocking = true;
   };
 
+  // The garage reuses the shop list: same navigation, same drawing, same tap
+  // handling. Only the rows and the actions differ.
+  HUD.prototype.openGarage = function (garage) {
+    var items = [];
+    for (var i = 0; i < garage.slots.length; i++) {
+      var slot = garage.slots[i];
+      items.push({
+        name: slot.name, price: 0, act: 'garageCar', index: i,
+        note: SB.Garage.tierSummary(slot)
+      });
+    }
+    if (!items.length) items = [{ name: 'Nothing stored', price: 0, act: 'none', note: '' }];
+    this.shop = {
+      room: { name: 'Your garage  ·  ' + garage.slots.length + '/' + garage.capacity() },
+      items: items, garage: garage
+    };
+    this.shopIndex = 0;
+    this.game.uiBlocking = true;
+  };
+
+  HUD.prototype.openGarageCar = function (garage, index) {
+    var slot = garage.slots[index];
+    if (!slot) { this.openGarage(garage); return; }
+    var items = [
+      { name: 'Bring it out', price: 0, act: 'garageOut', index: index, note: 'drive away' }
+    ];
+    for (var i = 0; i < SB.Garage.UPGRADE_ORDER.length; i++) {
+      var id = SB.Garage.UPGRADE_ORDER[i];
+      var lad = SB.Garage.UPGRADES[id];
+      var have = slot.upgrades[id] | 0;
+      var next = garage.upgradeCost(slot, id);
+      if (next) {
+        items.push({
+          name: lad.name + ' - ' + next.name, price: next.price,
+          act: 'garageUpgrade', index: index, upgrade: id
+        });
+      } else {
+        items.push({
+          name: lad.name + ' - ' + lad.tiers[have].name, price: 0,
+          act: 'none', note: 'maxed'
+        });
+      }
+    }
+    items.push({ name: 'Respray', price: 260, act: 'garageRespray', index: index });
+    items.push({ name: 'Back', price: 0, act: 'garageBack', note: '' });
+    this.shop = {
+      room: { name: slot.name.toUpperCase() },
+      items: items, garage: garage, carIndex: index
+    };
+    this.shopIndex = 0;
+    this.game.uiBlocking = true;
+  };
+
   HUD.prototype.closeShop = function () {
     this.shop = null;
     this.game.uiBlocking = false;
@@ -1670,6 +1728,51 @@
   HUD.prototype.buy = function (item) {
     var g = this.game, p = g.player;
     if (!item || item.act === 'none') return;
+    var garage = this.shop && this.shop.garage;
+    // Garage rows navigate as well as purchase, so they are handled before
+    // the affordability check that applies to shop goods.
+    if (garage) {
+      if (item.act === 'garageBack') { this.openGarage(garage); return; }
+      if (item.act === 'garageCar') { this.openGarageCar(garage, item.index); return; }
+      if (item.act === 'garageOut') {
+        var out = garage.retrieve(item.index);
+        this.closeShop();
+        if (!out) this.toast('Could not bring it out');
+        return;
+      }
+      if (p.money < item.price) { this.toast('Not enough money'); return; }
+      var slot = garage.slots[item.index];
+      if (!slot) { this.openGarage(garage); return; }
+      if (item.act === 'garageUpgrade') {
+        var step = garage.upgradeCost(slot, item.upgrade);
+        if (!step) return;
+        slot.upgrades[item.upgrade] = step.tier;
+        p.money -= item.price;
+        if (g.progress) g.progress.stats.spent += item.price;
+        g.bus.emit('shopPurchase', item);
+        if (g.audio) g.audio.blip('cash');
+        this.toast(SB.Garage.UPGRADES[item.upgrade].name + ': ' + step.name, '#8fe0a8');
+        this.openGarageCar(garage, item.index);
+        return;
+      }
+      if (item.act === 'garageRespray') {
+        var paints = SB.PAINTS;
+        var pick = slot.color;
+        // Never "respray" to the colour it already is.
+        for (var tries = 0; tries < 12 && pick === slot.color; tries++) {
+          pick = paints[Math.floor(Math.random() * paints.length)];
+        }
+        slot.color = pick;
+        p.money -= item.price;
+        if (g.progress) g.progress.stats.spent += item.price;
+        g.bus.emit('shopPurchase', item);
+        if (g.audio) g.audio.blip('cash');
+        this.toast('Resprayed', '#8fe0a8');
+        this.openGarageCar(garage, item.index);
+        return;
+      }
+      return;
+    }
     if (p.money < item.price) { this.toast('Not enough money'); return; }
     var done = false;
     if (item.act === 'health') {
@@ -1740,9 +1843,17 @@
       ctx.font = this.font(600, 18);
       ctx.fillText(it.name, x + 28 * this.s, ry + 23 * this.s);
       ctx.textAlign = 'right';
-      ctx.fillStyle = it.price > this.game.player.money ? '#e0553f' : '#8fe08f';
-      ctx.font = this.font(600, 17);
-      ctx.fillText(it.price ? SB.formatMoney(it.price) : 'free', x + w - 28 * this.s, ry + 23 * this.s);
+      // `note` replaces the price column for rows that are not purchases -
+      // a tier readout, a colour name, a "back" row.
+      if (it.note !== undefined) {
+        ctx.fillStyle = 'rgba(160,170,182,0.78)';
+        ctx.font = this.font(600, 14);
+        ctx.fillText(it.note, x + w - 28 * this.s, ry + 23 * this.s);
+      } else {
+        ctx.fillStyle = it.price > this.game.player.money ? '#e0553f' : '#8fe08f';
+        ctx.font = this.font(600, 17);
+        ctx.fillText(it.price ? SB.formatMoney(it.price) : 'free', x + w - 28 * this.s, ry + 23 * this.s);
+      }
     }
 
     ctx.textAlign = 'center';

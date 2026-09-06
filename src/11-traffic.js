@@ -85,6 +85,10 @@
   };
 
   Traffic.prototype.recycle = function (v) {
+    // A pooled car must come back straight. This also returns its private
+    // damaged geometry so the pool does not accumulate one body clone per
+    // car that was ever hit.
+    if (v.releaseDamage) v.releaseDamage();
     v.group.visible = false;
     v.pos.set(0, -500, 0);
     v.ai = null;

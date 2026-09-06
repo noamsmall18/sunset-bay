@@ -103,7 +103,8 @@
         hour: game.sky ? +game.sky.hour.toFixed(3) : 9,
         weather: game.weather ? game.weather.mode : 'sun'
       },
-      progress: game.progress ? game.progress.serialize() : null
+      progress: game.progress ? game.progress.serialize() : null,
+      garage: game.garage ? game.garage.serialize() : null
     };
   };
 
@@ -175,6 +176,7 @@
     }
 
     if (game.progress && data.progress) game.progress.restore(data.progress);
+    if (game.garage && data.garage) game.garage.restore(data.garage);
     game.bus.emit('gameLoaded', data);
     return true;
   };

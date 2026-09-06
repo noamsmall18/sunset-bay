@@ -376,7 +376,9 @@
       if (g.fx) g.fx.impact(hx, hy, hz, -r.dx, -r.dy, -r.dz, 'flesh');
       this.reportHit(head3, victim.dead);
     } else if (kind === 'car') {
-      victim.damage(w.damage * 1.5, 'gun');
+      // The trace already knows the exact impact point, so the dent lands
+      // where the round actually went in.
+      victim.damage(w.damage * 1.5, 'gun', -r.dx, -r.dz, hx, hy, hz);
       if (victim.dormant) victim.dormant = false;
       if (victim.ai) victim.ai.panic = 2;
       if (g.fx) g.fx.impact(hx, hy, hz, -r.dx, -r.dy, -r.dz, 'metal');

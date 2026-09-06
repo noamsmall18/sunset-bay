@@ -92,25 +92,53 @@
 
     var torso = this.torso = new THREE.Group();
     pelvis.add(torso);
-    var chest = capsule(0.19 * S, 0.18 * S, shirtM, 12, 4);
-    chest.scale.z = 0.60;
+
+    // Build varies per character: the same rig reads as a different person at
+    // 0.88 and at 1.14, and a crowd of identically-shaped people is the thing
+    // that gives a procedural city away fastest.
+    var build = opts.build !== undefined ? opts.build : (0.90 + rng() * 0.24);
+    this.build = build;
+
+    // Local +x is FORWARD and local z is the lateral axis. A human torso is
+    // wider across the shoulders than it is deep, so the depth axis is the one
+    // to squash. The rig had these the wrong way round: the chest came out
+    // 0.38 m deep and 0.23 m across, a slab facing forward, and the arms had
+    // to be hung out in clear air to clear it. Everything below that looked
+    // detached followed from this one line.
+    var chest = capsule(0.183 * S * build, 0.19 * S, shirtM, 12, 4);
+    chest.scale.x = 0.60;
     chest.position.y = 0.28 * S;
     torso.add(chest);
-    var hipsMesh = sphere(0.20 * S, 0.14 * S, 0.125 * S, pantsM);
-    hipsMesh.position.y = -0.06 * S;
+    // Shoulder caps bridge the torso to the arm sockets. Without them the arm
+    // is a floating cylinder no matter how close in it is placed.
+    // The arm has to hang OUTSIDE the chest silhouette, so the socket sits a
+    // little past the chest half-width rather than inside it.
+    var shoulderZ = 0.196 * S * build;
+    for (var sh = -1; sh <= 1; sh += 2) {
+      var delt = sphere(0.072 * S, 0.086 * S, 0.088 * S, shirtM);
+      delt.position.set(0, 0.505 * S, sh * shoulderZ);
+      torso.add(delt);
+    }
+    var neckMesh = capsule(0.052 * S, 0.055 * S, skinM, 8, 2);
+    neckMesh.position.y = 0.585 * S;
+    torso.add(neckMesh);
+
+    var hipsMesh = sphere(0.135 * S, 0.145 * S, 0.180 * S * build, pantsM);
+    hipsMesh.position.y = -0.055 * S;
     pelvis.add(hipsMesh);
 
     // Collar, belt and shirt placket make the body read as layered clothing
     // instead of one unbroken primitive at medium distance.
-    var collar = new THREE.Mesh(new THREE.TorusGeometry(0.135 * S, 0.025 * S, 6, 14), shirtM);
+    var collar = new THREE.Mesh(new THREE.TorusGeometry(0.088 * S, 0.022 * S, 6, 16), shirtM);
     collar.rotation.x = Math.PI / 2;
-    collar.position.set(0.01 * S, 0.53 * S, 0);
+    collar.scale.set(0.78, 1.32, 1);
+    collar.position.set(0.005 * S, 0.545 * S, 0);
     torso.add(collar);
-    var belt = box(0.37 * S, 0.045 * S, 0.24 * S, 0, mat(0x29231e, 0.68));
+    var belt = box(0.25 * S, 0.05 * S, 0.38 * S * build, 0, mat(0x29231e, 0.68));
     belt.position.y = 0.045 * S;
     pelvis.add(belt);
-    var buckle = box(0.065 * S, 0.07 * S, 0.07 * S, 0, metalM);
-    buckle.position.set(0.19 * S, 0.045 * S, 0);
+    var buckle = box(0.045 * S, 0.055 * S, 0.075 * S, 0, metalM);
+    buckle.position.set(0.128 * S, 0.045 * S, 0);
     pelvis.add(buckle);
 
     // neck + head
@@ -120,39 +148,79 @@
     var head = this.head = sphere(0.115 * S, 0.145 * S, 0.12 * S, skinM);
     head.position.y = 0.13 * S;
     neck.add(head);
-    var hairMesh = new THREE.Mesh(new THREE.SphereGeometry(0.126 * S, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.52), hairM);
-    hairMesh.scale.z = 0.96;
-    hairMesh.position.y = 0.17 * S;
-    neck.add(hairMesh);
+    // Hair styles: a close crop, a fuller cut that comes down over the ears,
+    // and bald. One shell each, following the head's ellipsoid rather than
+    // sitting on it as a perfect sphere.
+    var hairStyle = opts.hairStyle !== undefined ? opts.hairStyle
+      : (rng() < 0.12 ? 'bald' : (rng() < 0.42 ? 'long' : 'crop'));
+    this.hairStyle = hairStyle;
+    if (hairStyle !== 'bald') {
+      // One shell cannot do a haircut. Swept far enough to cover the back and
+      // sides it also comes down over the eyes, and swept short enough to
+      // clear the brow it leaves the back of the head bald. So: a crown cap
+      // that stops above the brow line all the way round, plus a back-and-
+      // sides piece that comes lower with the face left open. phi is the
+      // horizontal sweep and the face sits at phi = PI/2, so excluding a
+      // wedge there is what keeps the fringe off the eyes.
+      // The hairline lands at cos(capSweep) up the skull. At 0.40 it came down
+      // level with the brow and buried the eyes; a real hairline sits about
+      // three quarters of the way up the head.
+      var HAIR_R = 0.126 * S, capSweep = 0.33;
+      var crown = new THREE.Mesh(
+        new THREE.SphereGeometry(HAIR_R, 18, 10, 0, Math.PI * 2, 0, Math.PI * capSweep), hairM);
+      crown.scale.set(0.99, 1.16, 1.02);
+      crown.position.y = 0.135 * S;
+      neck.add(crown);
+
+      var backSweep = hairStyle === 'long' ? 0.74 : 0.58;
+      var faceGap = hairStyle === 'long' ? 0.56 : 0.66;
+      var sides = new THREE.Mesh(
+        new THREE.SphereGeometry(HAIR_R, 18, 12,
+          Math.PI * 0.5 + faceGap, Math.PI * 2 - faceGap * 2,
+          Math.PI * capSweep * 0.94, Math.PI * (backSweep - capSweep * 0.94)), hairM);
+      sides.scale.set(0.99, 1.16, 1.02);
+      sides.position.y = 0.135 * S;
+      neck.add(sides);
+    }
     // Small facial planes are cheap, but dramatically improve close third
     // person shots: eyes sit under a brow, the nose projects forward, and the
     // mouth gives the face a readable front even under sunset lighting.
+    // The features were all built about 50% oversized against a head of
+    // radius 0.115: eyes a fifth of the face wide, brows broad enough to meet
+    // in the middle, and a nose that stood proud of the profile. At any
+    // distance it read as a caricature rather than a person. These are sized
+    // off real proportions - eye width about a fifth of head width, set one
+    // eye-width apart - and sunk into the surface rather than stuck onto it.
     for (var eyeSide = -1; eyeSide <= 1; eyeSide += 2) {
-      var eye = sphere(0.025 * S, 0.025 * S, 0.020 * S, eyeM);
-      eye.position.set(0.103 * S, 0.155 * S, eyeSide * 0.052 * S);
+      var eye = sphere(0.017 * S, 0.019 * S, 0.015 * S, eyeM);
+      eye.position.set(0.099 * S, 0.150 * S, eyeSide * 0.046 * S);
       neck.add(eye);
-      var pupil = sphere(0.010 * S, 0.012 * S, 0.009 * S, pupilM);
-      pupil.position.set(0.124 * S, 0.155 * S, eyeSide * 0.052 * S);
+      var pupil = sphere(0.008 * S, 0.010 * S, 0.008 * S, pupilM);
+      pupil.position.set(0.111 * S, 0.150 * S, eyeSide * 0.046 * S);
       neck.add(pupil);
-      var brow = box(0.045 * S, 0.012 * S, 0.018 * S, 0, hairM);
-      brow.position.set(0.106 * S, 0.191 * S, eyeSide * 0.052 * S);
-      brow.rotation.z = eyeSide * 0.08;
+      var brow = box(0.022 * S, 0.008 * S, 0.034 * S, 0, hairM);
+      brow.position.set(0.098 * S, 0.174 * S, eyeSide * 0.047 * S);
+      brow.rotation.x = eyeSide * 0.10;
       neck.add(brow);
-      var ear = sphere(0.024 * S, 0.035 * S, 0.018 * S, skinM);
-      ear.position.set(-0.005 * S, 0.135 * S, eyeSide * 0.118 * S);
+      var ear = sphere(0.014 * S, 0.030 * S, 0.012 * S, skinM);
+      ear.position.set(-0.004 * S, 0.133 * S, eyeSide * 0.114 * S);
       neck.add(ear);
     }
-    var nose = sphere(0.030 * S, 0.025 * S, 0.026 * S, skinM);
-    nose.position.set(0.128 * S, 0.125 * S, 0);
+    var nose = sphere(0.024 * S, 0.030 * S, 0.019 * S, skinM);
+    nose.position.set(0.111 * S, 0.124 * S, 0);
     neck.add(nose);
-    var mouth = box(0.016 * S, 0.010 * S, 0.050 * S, 0, lipM);
-    mouth.position.set(0.116 * S, 0.083 * S, 0);
+    var mouth = box(0.012 * S, 0.009 * S, 0.038 * S, 0, lipM);
+    mouth.position.set(0.109 * S, 0.086 * S, 0);
     neck.add(mouth);
     if (beard) {
-      var beard = new THREE.Mesh(new THREE.SphereGeometry(0.108 * S, 12, 8, 0, Math.PI * 2, Math.PI * 0.48, Math.PI * 0.26), hairM);
-      beard.position.set(0.022 * S, 0.082 * S, 0);
-      beard.scale.z = 0.92;
-      neck.add(beard);
+      // phiStart/phiLength restrict the shell to the front of the head: a full
+      // horizontal sweep put a beard around the back of the skull as well.
+      var beardMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(0.106 * S, 16, 10,
+          Math.PI * 0.5 - 0.62, 1.24, Math.PI * 0.54, Math.PI * 0.23), hairM);
+      beardMesh.position.set(0.014 * S, 0.096 * S, 0);
+      beardMesh.scale.set(1.0, 1.15, 0.96);
+      neck.add(beardMesh);
     }
 
     if (opts.hat) {
@@ -164,31 +232,52 @@
       neck.add(brim);
     }
 
-    // arms
-    this.armL = limb(0.11 * S, 0.30 * S, 0.12 * S, shirtM);
-    this.armR = limb(0.11 * S, 0.30 * S, 0.12 * S, shirtM);
-    this.armL.position.set(0, 0.50 * S, -0.25 * S);
-    this.armR.position.set(0, 0.50 * S, 0.25 * S);
+    // arms - hung from the shoulder cap, not out in space beside it
+    this.armL = limb(0.098 * S, 0.30 * S, 0.104 * S, shirtM);
+    this.armR = limb(0.098 * S, 0.30 * S, 0.104 * S, shirtM);
+    this.armL.position.set(0, 0.505 * S, -shoulderZ);
+    this.armR.position.set(0, 0.505 * S, shoulderZ);
     torso.add(this.armL, this.armR);
-    this.foreL = limb(0.10 * S, 0.28 * S, 0.11 * S, skinM);
-    this.foreR = limb(0.10 * S, 0.28 * S, 0.11 * S, skinM);
+    this.foreL = limb(0.086 * S, 0.28 * S, 0.092 * S, skinM);
+    this.foreR = limb(0.086 * S, 0.28 * S, 0.092 * S, skinM);
     this.foreL.position.y = -0.30 * S;
     this.foreR.position.y = -0.30 * S;
     this.armL.add(this.foreL);
     this.armR.add(this.foreR);
+    // A cuff at the elbow turns the shirt-to-skin colour change into a short
+    // sleeve ending, instead of an arm that appears to be two materials.
+    for (var cuffSide = 0; cuffSide < 2; cuffSide++) {
+      var cuff = capsule(0.056 * S, 0.018 * S, shirtM, 10, 2);
+      cuff.scale.set(1.06, 1, 1.06);
+      cuff.position.y = -0.298 * S;
+      (cuffSide ? this.armR : this.armL).add(cuff);
+      var elbow = sphere(0.048 * S, 0.048 * S, 0.048 * S, skinM);
+      elbow.position.y = -0.012 * S;
+      (cuffSide ? this.foreR : this.foreL).add(elbow);
+    }
 
-    // legs
-    this.legL = limb(0.135 * S, 0.44 * S, 0.145 * S, pantsM);
-    this.legR = limb(0.135 * S, 0.44 * S, 0.145 * S, pantsM);
-    this.legL.position.set(0, -0.10 * S, -0.10 * S);
-    this.legR.position.set(0, -0.10 * S, 0.10 * S);
+    // legs - brought in under the hips and capped at the joint
+    var hipZ = 0.088 * S * build;
+    this.legL = limb(0.122 * S, 0.44 * S, 0.128 * S, pantsM);
+    this.legR = limb(0.122 * S, 0.44 * S, 0.128 * S, pantsM);
+    this.legL.position.set(0, -0.085 * S, -hipZ);
+    this.legR.position.set(0, -0.085 * S, hipZ);
     pelvis.add(this.legL, this.legR);
+    for (var hipSide = 0; hipSide < 2; hipSide++) {
+      var thighTop = sphere(0.070 * S, 0.072 * S, 0.072 * S, pantsM);
+      (hipSide ? this.legR : this.legL).add(thighTop);
+      var knee = sphere(0.058 * S, 0.058 * S, 0.058 * S, pantsM);
+      knee.position.y = -0.008 * S;
+      (hipSide ? this.shinRPending = knee : this.shinLPending = knee);
+    }
     this.shinL = limb(0.12 * S, 0.42 * S, 0.13 * S, pantsM);
     this.shinR = limb(0.12 * S, 0.42 * S, 0.13 * S, pantsM);
     this.shinL.position.y = -0.44 * S;
     this.shinR.position.y = -0.44 * S;
     this.legL.add(this.shinL);
     this.legR.add(this.shinR);
+    if (this.shinLPending) { this.shinL.add(this.shinLPending); this.shinLPending = null; }
+    if (this.shinRPending) { this.shinR.add(this.shinRPending); this.shinRPending = null; }
     var footL = capsule(0.065 * S, 0.11 * S, shoeM, 9, 3);
     var footR = capsule(0.065 * S, 0.11 * S, shoeM, 9, 3);
     footL.scale.x = 1.8; footL.scale.z = 1.0;
@@ -204,7 +293,9 @@
     this.shinL.add(soleL); this.shinR.add(soleR);
 
     if (opts.vest) {
-      var vest = box(0.44 * S, 0.40 * S, 0.27 * S, 0, mat(opts.vest, 0.7));
+      // Same axis correction as the chest: a body-armour plate is broad and
+      // shallow, not deep and narrow.
+      var vest = box(0.27 * S, 0.40 * S, 0.42 * S * build, 0, mat(opts.vest, 0.7));
       vest.position.y = 0.30 * S;
       torso.add(vest);
     }
@@ -224,9 +315,9 @@
     this.hand.position.y = -0.28 * S;
     this.foreR.add(this.hand);
     this.weaponMesh = null;
-    var handL = sphere(0.065 * S, 0.065 * S, 0.065 * S, skinM);
-    var handR = sphere(0.065 * S, 0.065 * S, 0.065 * S, skinM);
-    handL.position.y = -0.30 * S; handR.position.y = -0.30 * S;
+    var handL = sphere(0.052 * S, 0.062 * S, 0.040 * S, skinM);
+    var handR = sphere(0.052 * S, 0.062 * S, 0.040 * S, skinM);
+    handL.position.y = -0.295 * S; handR.position.y = -0.295 * S;
     this.foreL.add(handL); this.foreR.add(handR);
 
     this.phase = 0;

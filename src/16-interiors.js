@@ -1239,6 +1239,8 @@
     v.destroyed = false;
     v.smoking = false;
     v.burning = 0;
+    // A respray that leaves the wing caved in is not a respray.
+    if (v.repairBody) v.repairBody();
     v.setColor(SB.PAINTS[Math.floor(Math.random() * SB.PAINTS.length)]);
     sp.cooldown = 8;
     if (this.game.police) this.game.police.clearWanted();

@@ -328,7 +328,11 @@
   function materials() {
     if (sharedMats) return sharedMats;
     sharedMats = {
-      glass: new THREE.MeshStandardMaterial({ color: 0x1c2530, roughness: 0.04, metalness: 0.92 }),
+      // Tagged so a damaged car can find and clone its own glass without
+      // having to know which material slot index it landed in.
+      glass: Object.assign(
+        new THREE.MeshStandardMaterial({ color: 0x1c2530, roughness: 0.04, metalness: 0.92 }),
+        { userData: { glass: true } }),
       trim: new THREE.MeshStandardMaterial({ color: 0x1b1d21, roughness: 0.62, metalness: 0.35 }),
       tyre: new THREE.MeshStandardMaterial({ color: 0x14151a, roughness: 0.95 }),
       rim: new THREE.MeshStandardMaterial({ color: 0xb6bcc4, roughness: 0.28, metalness: 0.85 }),
@@ -432,6 +436,10 @@
     }
 
     this.group = new THREE.Group();
+    // Kept so a damaged car can hand back its private clone and go back to
+    // sharing the class geometry when it is recycled.
+    this._sharedGeo = cg.geometry;
+    this._sharedMats = slotMats.slice(0);
     this.body = new THREE.Mesh(cg.geometry, slotMats);
     this.body.castShadow = true;
     this.body.receiveShadow = true;
@@ -915,7 +923,12 @@
         var impact = -vn;
         if (impact > 3 && performance.now() - this.lastImpact > 120) {
           this.lastImpact = performance.now();
-          this.damage(impact * impact * 1.1, 'world', nx, nz);
+          // Dent the panel that actually touched: the contact normal points
+          // away from the obstacle, so step back along it from the centre.
+          this.damage(impact * impact * 1.1, 'world', nx, nz,
+            this.pos.x - nx * this.spec.len * 0.36,
+            this.pos.y + 0.32,
+            this.pos.z - nz * this.spec.len * 0.36);
         }
       }
       this.yawRate *= 0.55;
@@ -925,9 +938,167 @@
     return totalHits;
   };
 
-  Vehicle.prototype.damage = function (amount, source, nx, nz) {
+  // ------------------------------------------------------ visual damage ----
+  // Cars tracked health and burned, but never actually looked hit. These
+  // deform the body where it was struck.
+  //
+  // carGeometry() is cached per vehicle CLASS, so denting it directly would
+  // dent every sedan in the city at once. The geometry is therefore cloned
+  // the first time a given car is damaged and not before: most cars in a
+  // session are never touched, and paying a clone for all of them up front
+  // would cost far more than the effect is worth.
+  var MAX_DENTS = 14;
+
+  Vehicle.prototype.ownBodyGeometry = function () {
+    if (this._ownGeo) return this.body.geometry;
+    var src = this.body.geometry;
+    var clone = src.clone();
+    this.body.geometry = clone;
+    this._ownGeo = true;
+    // Keep the pristine positions so the panel can be beaten back out when
+    // the car is repaired, rather than accumulating forever.
+    this._pristine = new Float32Array(clone.attributes.position.array);
+    this._dents = 0;
+    return clone;
+  };
+
+  // Push the panel in around a world-space impact. `strength` is metres of
+  // maximum displacement at the centre of the dent.
+  Vehicle.prototype.dentAt = function (wx, wy, wz, strength) {
+    if (!(strength > 0.004) || this.exploded) return;
+    if (this._dents >= MAX_DENTS) return;
+    var geo = this.ownBodyGeometry();
+    var pos = geo.attributes.position;
+    var arr = pos.array;
+
+    // World -> body local. The body is yawed by -yaw about its own origin and
+    // the group carries the position, so undo both.
+    var dx = wx - this.pos.x, dy = wy - this.pos.y, dz = wz - this.pos.z;
+    var ca = Math.cos(this.yaw), sa = Math.sin(this.yaw);
+    var lx = dx * ca + dz * sa;
+    var lz = -dx * sa + dz * ca;
+    var ly = dy;
+
+    var radius = M.clamp(0.52 + strength * 2.6, 0.52, 1.7);
+    var r2 = radius * radius;
+    var moved = 0;
+    for (var i = 0; i < arr.length; i += 3) {
+      var vx = arr[i], vy = arr[i + 1], vz = arr[i + 2];
+      var ex = vx - lx, ey = vy - ly, ez = vz - lz;
+      var d2 = ex * ex + ey * ey + ez * ez;
+      if (d2 > r2) continue;
+      var fall = 1 - Math.sqrt(d2) / radius;
+      fall = fall * fall * (3 - 2 * fall);           // smoothstep
+      var push = strength * fall;
+      // Pull the surface toward the impact centre: that reads as a dent
+      // rather than as a lump pushed straight through the panel.
+      var len = Math.sqrt(d2) || 1;
+      arr[i] = vx - (ex / len) * push;
+      arr[i + 1] = vy - (ey / len) * push * 0.75;
+      arr[i + 2] = vz - (ez / len) * push;
+      moved++;
+    }
+    if (!moved) return;
+    this._dents++;
+    pos.needsUpdate = true;
+    geo.computeVertexNormals();
+    geo.computeBoundingSphere();
+  };
+
+  // Glass crazes and then goes out. One material per damaged car, cloned on
+  // demand for the same reason the geometry is.
+  Vehicle.prototype.updateGlassDamage = function () {
+    var frac = M.clamp(this.health / this.maxHealth, 0, 1);
+    var want = frac < 0.30 ? 2 : (frac < 0.62 ? 1 : 0);
+    if (want === (this._glassState || 0)) return;
+    this._glassState = want;
+    var mats = this.body.material;
+    if (!Array.isArray(mats)) return;
+    for (var i = 0; i < mats.length; i++) {
+      if (!mats[i] || !mats[i].userData || !mats[i].userData.glass) continue;
+      if (!this._ownGlass) {
+        mats[i] = mats[i].clone();
+        mats[i].userData = { glass: true };
+        this._ownGlass = true;
+      }
+      // The base glass is opaque dark-and-mirrored rather than transparent, so
+      // the damage states are expressed in roughness and metalness - which
+      // this material actually responds to - not in opacity, which it does
+      // not use at all.
+      var m = mats[i];
+      if (want === 0) {
+        m.roughness = 0.04; m.metalness = 0.92; m.color.setHex(0x1c2530);
+      } else if (want === 1) {
+        // crazed: frosted white. Against glass this dark, "slightly less
+        // dark" is invisible; spidered safety glass going pale is both
+        // truthful and the only version you can actually see at speed.
+        m.roughness = 0.78; m.metalness = 0.25; m.color.setHex(0x474e55);
+      } else {
+        // blown out: a dark empty hole where the glass was
+        m.roughness = 0.94; m.metalness = 0.04; m.color.setHex(0x0b0d11);
+      }
+      m.needsUpdate = true;
+    }
+    this.body.material = mats;
+  };
+
+  // Hand back the private geometry and materials. Called when a car is
+  // recycled into the pool: without this, every car that is ever damaged
+  // keeps its own copy of the body for the rest of the session.
+  Vehicle.prototype.releaseDamage = function () {
+    if (this._ownGeo) {
+      var mine = this.body.geometry;
+      this.body.geometry = this._sharedGeo;
+      if (mine && mine.dispose) mine.dispose();
+      this._ownGeo = false;
+      this._pristine = null;
+      this._dents = 0;
+    }
+    if (this._ownGlass) {
+      var mats = this.body.material;
+      if (Array.isArray(mats)) {
+        for (var i = 0; i < mats.length; i++) {
+          if (mats[i] && mats[i].userData && mats[i].userData.glass) {
+            if (mats[i].dispose) mats[i].dispose();
+            mats[i] = this._sharedMats[i];
+          }
+        }
+        this.body.material = mats;
+      }
+      this._ownGlass = false;
+    }
+    this._glassState = 0;
+  };
+
+  // Put every panel back. Used by the respray and by the garage.
+  Vehicle.prototype.repairBody = function () {
+    if (this._ownGeo && this._pristine) {
+      var pos = this.body.geometry.attributes.position;
+      pos.array.set(this._pristine);
+      pos.needsUpdate = true;
+      this.body.geometry.computeVertexNormals();
+      this.body.geometry.computeBoundingSphere();
+      this._dents = 0;
+    }
+    this._glassState = -1;
+    this.updateGlassDamage();
+  };
+
+  Vehicle.prototype.damage = function (amount, source, nx, nz, px, py, pz) {
     if (this.destroyed) return;
     this.health -= amount;
+    // Where it was hit: a caller that knows the point passes it, otherwise
+    // fall back to the contact normal projected onto the body.
+    if (px === undefined && nx !== undefined) {
+      px = this.pos.x - nx * this.spec.len * 0.34;
+      py = this.pos.y + 0.3;
+      pz = this.pos.z - nz * this.spec.len * 0.34;
+    }
+    if (px !== undefined) {
+      this.dentAt(px, py === undefined ? this.pos.y + 0.3 : py, pz,
+        M.clamp(amount * 0.0022, 0, 0.30));
+    }
+    this.updateGlassDamage();
     if (this.onDamage) this.onDamage(amount, source, nx, nz);
     if (this.health <= 0) {
       this.destroyed = true;

@@ -61,7 +61,7 @@ Keyboard and mouse:
 | Board a train | `F` at the cab, once it has stopped at a platform |
 | Train throttle / brake | `W` / `S` (`Space` for full brake) |
 | Vehicle special ability | `V` in an ability-equipped car |
-| Interact, doors, shops | `E` |
+| Interact, doors, shops, garage | `E` |
 | Enter / leave yacht cabin | `E` near the cabin prompt |
 | Aim / fire | Right mouse / Left mouse |
 | Weapons | `1`-`5`, mouse wheel |
@@ -188,6 +188,16 @@ The game detects a touch device and adapts on its own:
   Ten ranks, each with a cash bonus and unlocks behind it, and a full stats page
   on `P` showing the record of the run - work, heat, distance travelled by each
   means, top speed, interiors found and what is still locked.
+- **Your garage.** The multi-storey car park has a bay with your name on it
+  from rank three. Drive a car in and press `E` to leave it there; come back on
+  foot and press `E` to pick from what you have stored, bring one out repaired,
+  respray it, or spend money on it. Engine, brake and tyre upgrades multiply
+  the real handling fields the physics reads, so a built car genuinely drives
+  differently. Bay count grows with rank, and the garage is part of the save.
+- **Damage you can see.** Cars deform where they are actually hit - a ram, a
+  wall, a burst of rifle fire - and their glass crazes and then goes out as
+  the shell gives up. A Pay 'n' Spray or a night in the garage beats the
+  panels back out.
 - **Saving.** The run persists. Money, rank, every statistic, story progress,
   weapons and ammunition, the time of day and the weather are checkpointed to
   local storage on a slow timer and immediately on anything that matters, and
@@ -246,6 +256,7 @@ src/31-rail.js        track, viaduct, stations and the drivable train
 src/32-rooftops.js    rooftop billboards and roof-level detail
 src/33-progress.js    rank, respect, statistics and rank-gated unlocks
 src/34-save.js        capture, restore and autosave of a run
+src/35-garage.js      the personal garage: storage, respray, upgrades
 ```
 
 ## Notes
@@ -291,7 +302,21 @@ src/34-save.js        capture, restore and autosave of a run
 - A save stores no world. The city, its buildings and all 1,004 interiors are
   deterministic from a fixed seed, so persistence only has to record the
   difference the player made.
-- `#dev` now also proves the three systems most likely to break silently: that
+- Body damage is copy-on-write. `carGeometry()` is cached per vehicle *class*,
+  so denting it directly would dent every sedan in the city at once; a car
+  clones its body the first time it is hit and hands the clone back when it is
+  recycled into the pool. Most cars in a session are never touched, and paying
+  for a clone up front for all of them would cost far more than the effect is
+  worth.
+- A car fetched from the garage has its height set explicitly rather than by
+  `Vehicle.placeAt`, whose surface query starts 50 m up and therefore finds the
+  *roof* of a three-deck car park. The per-wheel suspension query is relative
+  to the car's own height, so once it starts on the ground floor it stays
+  there.
+- `#dev` now also proves the systems most likely to break silently: that
   every routed path is made of real edges and is cost-optimal by the Bellman
   condition, that every contract type generates a runnable job with finite
-  targets, and that a save captured and re-applied is lossless.
+  targets, that a save captured and re-applied is lossless, that a car stored
+  and fetched from the garage comes back in its bay with its upgrades reaching
+  the physics and without leaking into the shared spec, and that a dent stays
+  private to the car that took it and is fully undone by a repair.
