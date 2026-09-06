@@ -107,7 +107,7 @@ Keyboard and mouse:
 | First / third person | `G` |
 | Photo mode (free camera, HUD off) | `X` |
 | Controls card | `F1` |
-| Performance settings | `F2` |
+| Settings (audio, controls, accessibility, graphics) | `F2` |
 | Cycle weather | `T` (or `WX` on touch) |
 
 ## Playing on a phone or tablet
@@ -250,6 +250,12 @@ The game detects a touch device and adapts on its own:
 - **Camera.** A first-person view on foot and in every vehicle (`G`), and a
   photo mode (`X`) that stops the world, hides the HUD and gives you a free
   camera to fly.
+- **Settings and accessibility** (`F2`). Master, effects and radio volumes with
+  a mute, look speed, an inverted vertical axis, a reduced-motion option that
+  turns off camera shake and motion blur, and an HUD size multiplier. All of it
+  is stored on the device and applied live. Every stored value is clamped
+  against its own range on the way in, so a corrupted entry cannot leave the
+  game silent with no way to see why.
 - **Live weather.** Cycle clear sun, rain, snow, and a forced night front in
   the middle of a session. Rain lays down reflective puddles, reduces tire
   grip, adds foot slips and lightning; snow accumulates in drifts, slows and
@@ -305,6 +311,7 @@ src/34-save.js        capture, restore and autosave of a run
 src/35-garage.js      the personal garage: storage, respray, upgrades
 src/36-rhythm.js      the city's daily rhythm: population and mix by hour
 src/37-camera.js      first person and photo mode, layered on the follow rig
+src/38-settings.js    audio, look, motion and HUD settings, stored per device
 ```
 
 ## Notes

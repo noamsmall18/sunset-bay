@@ -156,6 +156,71 @@
           refreshPerformance();
         });
       });
+      // ---- settings panel -------------------------------------------------
+      // Sliders and checkboxes bound to SB.Settings. Each control writes on
+      // input so the change is audible or visible while the player is still
+      // dragging, which is the only way to set a volume by ear.
+      function wireSettings() {
+        if (!SB.Settings) return;
+        var S = SB.Settings;
+        var pct = function (v) { return Math.round(v * 100) + '%'; };
+        var sliders = [
+          ['setVolMaster', 'volMaster', 100, pct],
+          ['setVolEffects', 'volEffects', 100, pct],
+          ['setVolMusic', 'volMusic', 100, pct],
+          ['setLookSpeed', 'lookSpeed', 100, function (v) { return v.toFixed(2) + '\u00d7'; }],
+          ['setHudScale', 'hudScale', 100, pct]
+        ];
+        var toggles = [['setMuted', 'muted'], ['setInvertY', 'invertY'],
+          ['setReduceMotion', 'reduceMotion']];
+
+        function refresh() {
+          sliders.forEach(function (row) {
+            var el = document.getElementById(row[0]);
+            var out = document.getElementById(row[0] + 'Val');
+            if (!el) return;
+            var value = S.get(row[1]);
+            el.value = Math.round(value * row[2]);
+            if (out) out.textContent = row[3](value);
+          });
+          toggles.forEach(function (row) {
+            var el = document.getElementById(row[0]);
+            if (el) el.checked = !!S.get(row[1]);
+          });
+          // A muted game should not look like it has a working master volume.
+          var masterEl = document.getElementById('setVolMaster');
+          if (masterEl) masterEl.disabled = !!S.get('muted');
+        }
+
+        sliders.forEach(function (row) {
+          var el = document.getElementById(row[0]);
+          if (!el) return;
+          el.addEventListener('input', function () {
+            S.set(row[1], Number(el.value) / row[2]);
+            var out = document.getElementById(row[0] + 'Val');
+            if (out) out.textContent = row[3](S.get(row[1]));
+            // The HUD reads its scale at resize time, so nudge it.
+            if (row[1] === 'hudScale' && g.hud) g.hud.resize();
+          });
+        });
+        toggles.forEach(function (row) {
+          var el = document.getElementById(row[0]);
+          if (!el) return;
+          el.addEventListener('change', function () {
+            S.set(row[1], el.checked ? 1 : 0);
+            refresh();
+          });
+        });
+        var resetBtn = document.getElementById('setReset');
+        if (resetBtn) resetBtn.addEventListener('click', function () {
+          S.reset();
+          refresh();
+          if (g.hud) g.hud.resize();
+        });
+        refresh();
+      }
+      wireSettings();
+
       perfStats.addEventListener('change', function () {
         SB.Q.showStats = perfStats.checked;
         try { localStorage.setItem('sunsetbay.stats', perfStats.checked ? '1' : '0'); } catch (e) { }

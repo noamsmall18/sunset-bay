@@ -751,7 +751,11 @@
     u.uAOAmount.value = aoOn ? this.aoAmount : 0;
     u.uSSRAmount.value = ssrOn ? this.ssrAmount : 0;
     u.uShaftAmount.value = shaftStrength * 0.55;
-    u.uMotion.value = (this.useMotion && !this._skipMotion) ? this.motionAmount : 0;
+    // Reduced motion switches camera blur off regardless of the quality tier:
+    // for a motion-sensitive player it is the effect most likely to make the
+    // game unplayable, and the graphics budget is the wrong place to find it.
+    var motionOk = !SB.Settings || SB.Settings.motionScale() > 0;
+    u.uMotion.value = (this.useMotion && !this._skipMotion && motionOk) ? this.motionAmount : 0;
     this._skipMotion = false;
     u.uGrain.value = this.grain;
     u.uChroma.value = Number.isFinite(this.chroma) ? M.clamp(this.chroma, 0, 0.001) : 0;

@@ -155,7 +155,11 @@
     this.w = w; this.h = h;
     // One scale factor for the whole HUD, driven by the short edge: a phone in
     // landscape is ~390px tall and cannot carry desktop-sized furniture.
-    this.s = M.clamp(Math.min(w, h) / 760, 0.62, 1.12);
+    // The automatic scale still drives the base size; the player setting is a
+    // multiplier on top, so a phone stays readable and someone who wants
+    // bigger text on a desktop can have it.
+    this.s = M.clamp(Math.min(w, h) / 760, 0.62, 1.12) *
+      (SB.Settings ? SB.Settings.hudScale() : 1);
     this.sa = safeArea();
     this.touchMode = !!this.game.isTouch;
     // height reserved for the touch utility row along the top right

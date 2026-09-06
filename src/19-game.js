@@ -137,6 +137,9 @@
 
   Game.prototype.stepSystems = function () {
     if (SB.Audio) this.audio = new SB.Audio();
+    // Attached right after the audio graph exists, so stored volumes are in
+    // force before the first sound rather than after it.
+    if (SB.Settings) SB.Settings.attach(this);
     if (SB.Lights) this.lights = new SB.Lights(this);
     if (SB.Fx) this.fx = new SB.Fx(this);
     if (SB.Weather) this.weather = new SB.Weather(this);
@@ -917,6 +920,50 @@
         cams.setMode(startMode);
       }
 
+      // ---- settings: clamping, persistence and live audio ------------------
+      // The game shipped with no volume control at all, so the risk worth
+      // guarding is not "a slider looks wrong" but "a stored value silently
+      // leaves the player with no audio and no way to see why".
+      if (SB.Settings) {
+        var St = SB.Settings;
+        var keptSettings = JSON.parse(JSON.stringify(St.values));
+
+        // Anything that is not a finite number in range must fall back to the
+        // default rather than reaching a gain node.
+        var junk = St.sanitize({
+          volMaster: 'loud', volEffects: 99, volMusic: -5, muted: true,
+          lookSpeed: NaN, hudScale: null, notASetting: 7
+        });
+        if (junk.volMaster !== St.DEFS.volMaster[0]) issues.push('settings: a non-numeric volume was not rejected');
+        if (junk.volEffects !== 1) issues.push('settings: an out-of-range volume was not clamped');
+        if (junk.volMusic !== 0) issues.push('settings: a negative volume was not clamped');
+        if (junk.muted !== 1) issues.push('settings: a boolean was not coerced');
+        if (junk.lookSpeed !== St.DEFS.lookSpeed[0]) issues.push('settings: NaN look speed was not rejected');
+        if ('notASetting' in junk) issues.push('settings: an unknown key survived sanitising');
+
+        // The read-side helpers are what the player, camera, HUD and post
+        // pipeline actually consult.
+        St.values.invertY = 1; St.values.reduceMotion = 1;
+        St.values.lookSpeed = 2; St.values.hudScale = 1.25;
+        if (St.lookInvertY() !== -1) issues.push('settings: invertY does not invert');
+        if (St.motionScale() !== 0) issues.push('settings: reduceMotion does not zero motion');
+        if (St.lookScale() !== 2) issues.push('settings: lookScale does not report the setting');
+        if (St.hudScale() !== 1.25) issues.push('settings: hudScale does not report the setting');
+
+        // Muting has to reach the master gain, not just the checkbox.
+        if (this.audio && this.audio.ready) {
+          St.values.muted = 1; St.values.volMaster = 0.8;
+          St.apply();
+          var target = this.audio.master.gain.value;
+          // setTargetAtTime ramps, so read the scheduled target rather than
+          // the instantaneous value where the browser exposes it.
+          if (target > 0.85) issues.push('settings: mute did not move the master gain');
+        }
+
+        St.values = keptSettings;
+        St.apply();
+      }
+
       // ---- save: capture and re-apply must be lossless ---------------------
       if (SB.Save && this.player) {
         var snap = SB.Save.capture(this);
@@ -948,7 +995,7 @@
         ' building doors, ' + this.interiors.rooms.length + ' unique furnished interiors, ' +
         generatedRooms + ' generated variants, ' + hotspotTotal + ' interior hotspots, ' +
         'multi-level/bank/vehicle/car-stability/boat/plane/heli/routing/contract/' +
-        'garage/damage/rhythm/camera/save probes clean)');
+        'garage/damage/rhythm/camera/settings/save probes clean)');
     }
     this.selfTestIssues = issues;
   };

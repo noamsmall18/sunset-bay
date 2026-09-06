@@ -196,6 +196,24 @@
   .perf-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 12px 0 20px; color: var(--dim); font: 600 14px/1.3 var(--ui); }
   #perfStats { accent-color: var(--gold); width: 18px; height: 18px; }
   #perfClose { width: 100%; padding: 11px; color: #10131a; background: linear-gradient(180deg, #ffd873, #f0a13a); border: 0; border-radius: 3px; cursor: pointer; }
+  /* settings rows */
+  .set-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 9px 0; color: var(--dim); font: 600 14px/1.3 var(--ui); cursor: pointer; }
+  .set-row i { display: block; margin-top: 3px; font: 500 11px/1.3 var(--ui); font-style: normal; color: #6f7d90; letter-spacing: .02em; }
+  .set-row input[type=checkbox] { accent-color: var(--gold); width: 18px; height: 18px; flex: none; cursor: pointer; }
+  .set-slider { display: block; margin: 9px 0 13px; color: var(--dim); font: 600 13px/1.3 var(--ui); cursor: pointer; }
+  .set-slider > span { display: flex; justify-content: space-between; margin-bottom: 5px; }
+  .set-slider b { color: var(--ink); font-weight: 700; font-variant-numeric: tabular-nums; }
+  .set-slider input[type=range] { width: 100%; accent-color: var(--gold); height: 20px; cursor: pointer; }
+  #setReset {
+    width: 100%; padding: 9px; margin-bottom: 8px;
+    font: 700 12px/1 var(--ui); letter-spacing: .1em; text-transform: uppercase;
+    color: #c9d0d9; background: rgba(255,255,255,.06);
+    border: 1px solid rgba(255,255,255,.14); border-radius: 3px; cursor: pointer;
+  }
+  #setReset:hover { border-color: rgba(242,193,78,.6); color: var(--gold); }
+  /* The panel now has real content in it, so it has to be able to scroll on a
+     short screen rather than pushing Done off the bottom. */
+  #performance { max-height: calc(100vh - 40px); overflow-y: auto; }
 
   /* ---------- touch controls ---------- */
   #touch { position: fixed; inset: 0; z-index: 8; display: none; touch-action: none; }
@@ -298,7 +316,7 @@
     <div class="row"><span>Plane boost / airbrake</span><kbd>Shift</kbd> / <kbd>Space</kbd></div>
     <div class="row"><span>Helicopter up / down</span><kbd>Space</kbd> / <kbd>C</kbd></div>
     <div class="row"><span>Controls</span><kbd>F1</kbd></div>
-    <div class="row"><span>Performance</span><kbd>F2</kbd></div>
+    <div class="row"><span>Settings</span><kbd>F2</kbd></div>
     <div class="row"><span>Cycle weather</span><kbd>T</kbd></div>
     <div class="row"><span>Pause</span><kbd>Esc</kbd></div>
   </div>
@@ -310,8 +328,8 @@
 </div>
 
 <div id="performance" class="panel">
-  <h2>Performance</h2>
-  <p class="perf-lead">The game targets a 10 ms frame budget for 100 FPS. Your display still sets the maximum visible refresh rate.</p>
+  <h2>Settings</h2>
+  <p class="perf-lead">Audio, controls and accessibility options are stored on this device. The graphics budget targets a 10&nbsp;ms frame for 100&nbsp;FPS; your display still sets the maximum visible refresh rate.</p>
   <div id="perfStatus">Measuring frame rate&hellip;</div>
   <span class="perf-label">Graphics budget</span>
   <div class="perf-options">
@@ -321,6 +339,25 @@
     <button type="button" data-quality="high">High</button>
   </div>
   <label class="perf-row" for="perfStats"><span>Show live meter in the HUD</span><input id="perfStats" type="checkbox"></label>
+
+  <span class="perf-label">Audio</span>
+  <label class="set-row" for="setMuted"><span>Mute everything</span><input id="setMuted" type="checkbox"></label>
+  <label class="set-slider" for="setVolMaster"><span>Master<b id="setVolMasterVal">85%</b></span>
+    <input id="setVolMaster" type="range" min="0" max="100" step="1" value="85"></label>
+  <label class="set-slider" for="setVolEffects"><span>Effects<b id="setVolEffectsVal">100%</b></span>
+    <input id="setVolEffects" type="range" min="0" max="100" step="1" value="100"></label>
+  <label class="set-slider" for="setVolMusic"><span>Radio<b id="setVolMusicVal">30%</b></span>
+    <input id="setVolMusic" type="range" min="0" max="100" step="1" value="30"></label>
+
+  <span class="perf-label">Controls &amp; accessibility</span>
+  <label class="set-slider" for="setLookSpeed"><span>Look speed<b id="setLookSpeedVal">1.00&times;</b></span>
+    <input id="setLookSpeed" type="range" min="25" max="300" step="5" value="100"></label>
+  <label class="set-row" for="setInvertY"><span>Invert vertical look</span><input id="setInvertY" type="checkbox"></label>
+  <label class="set-row" for="setReduceMotion"><span>Reduce motion<i>Turns off camera shake and motion blur</i></span><input id="setReduceMotion" type="checkbox"></label>
+  <label class="set-slider" for="setHudScale"><span>HUD size<b id="setHudScaleVal">100%</b></span>
+    <input id="setHudScale" type="range" min="75" max="140" step="5" value="100"></label>
+
+  <button id="setReset" type="button">Reset to defaults</button>
   <button id="perfClose" type="button">Done</button>
 </div>
 
@@ -329,7 +366,7 @@
   <div class="sub">Free roam &middot; West Coast</div>
   <div id="bar"><div id="barFill"></div></div>
   <div id="bootMsg">Starting up</div>
-  <div class="boot-actions"><button id="continueBtn" type="button">Continue</button><button id="startBtn">Enter the city</button><button id="perfBtn" type="button">Performance</button></div>
+  <div class="boot-actions"><button id="continueBtn" type="button">Continue</button><button id="startBtn">Enter the city</button><button id="perfBtn" type="button">Settings</button></div>
   <div id="saveInfo"></div>
 </div>
 
@@ -373,51 +410,52 @@
 <pre id="err"></pre>
 
 
-<script src="vendor/three.min.js?v=8b78623668e6"></script>
-<script src="src/00-core.js?v=8b78623668e6"></script>
-<script src="src/01-textures.js?v=8b78623668e6"></script>
-<script src="src/02-layout.js?v=8b78623668e6"></script>
-<script src="src/03-world.js?v=8b78623668e6"></script>
-<script src="src/04-geom.js?v=8b78623668e6"></script>
-<script src="src/04b-terrain.js?v=8b78623668e6"></script>
-<script src="src/05-city.js?v=8b78623668e6"></script>
-<script src="src/06-sky.js?v=8b78623668e6"></script>
-<script src="src/07-vehicle.js?v=8b78623668e6"></script>
-<script src="src/08-props.js?v=8b78623668e6"></script>
-<script src="src/09-characters.js?v=8b78623668e6"></script>
-<script src="src/10-fx.js?v=8b78623668e6"></script>
-<script src="src/11-traffic.js?v=8b78623668e6"></script>
-<script src="src/12-player.js?v=8b78623668e6"></script>
-<script src="src/13-peds.js?v=8b78623668e6"></script>
-<script src="src/14-combat.js?v=8b78623668e6"></script>
-<script src="src/15-police.js?v=8b78623668e6"></script>
-<script src="src/16-interiors.js?v=8b78623668e6"></script>
-<script src="src/17-missions.js?v=8b78623668e6"></script>
-<script src="src/18-hud.js?v=8b78623668e6"></script>
-<script src="src/19-game.js?v=8b78623668e6"></script>
-<script src="src/20-startup.js?v=8b78623668e6"></script>
-<script src="src/21-audio.js?v=8b78623668e6"></script>
-<script src="src/22-post.js?v=8b78623668e6"></script>
-<script src="src/23-quality.js?v=8b78623668e6"></script>
-<script src="src/24-touch.js?v=8b78623668e6"></script>
-<script src="src/25-lights.js?v=8b78623668e6"></script>
-<script src="src/26-boats.js?v=8b78623668e6"></script>
-<script src="src/27-aircraft.js?v=8b78623668e6"></script>
-<script src="src/28-infrastructure.js?v=8b78623668e6"></script>
-<script src="src/29-weather.js?v=8b78623668e6"></script>
-<script src="src/30-freeway.js?v=8b78623668e6"></script>
-<script src="src/31-rail.js?v=8b78623668e6"></script>
-<script src="src/32-rooftops.js?v=8b78623668e6"></script>
-<script src="src/33-coast.js?v=8b78623668e6"></script>
-<script src="src/33-progress.js?v=8b78623668e6"></script>
-<script src="src/34-activities.js?v=8b78623668e6"></script>
-<script src="src/34-save.js?v=8b78623668e6"></script>
-<script src="src/35-garage.js?v=8b78623668e6"></script>
-<script src="src/35-save.js?v=8b78623668e6"></script>
-<script src="src/36-city-life.js?v=8b78623668e6"></script>
-<script src="src/36-rhythm.js?v=8b78623668e6"></script>
-<script src="src/37-camera.js?v=8b78623668e6"></script>
-<script src="src/37-deliveries.js?v=8b78623668e6"></script>
+<script src="vendor/three.min.js?v=1e8fd07b601d"></script>
+<script src="src/00-core.js?v=1e8fd07b601d"></script>
+<script src="src/01-textures.js?v=1e8fd07b601d"></script>
+<script src="src/02-layout.js?v=1e8fd07b601d"></script>
+<script src="src/03-world.js?v=1e8fd07b601d"></script>
+<script src="src/04-geom.js?v=1e8fd07b601d"></script>
+<script src="src/04b-terrain.js?v=1e8fd07b601d"></script>
+<script src="src/05-city.js?v=1e8fd07b601d"></script>
+<script src="src/06-sky.js?v=1e8fd07b601d"></script>
+<script src="src/07-vehicle.js?v=1e8fd07b601d"></script>
+<script src="src/08-props.js?v=1e8fd07b601d"></script>
+<script src="src/09-characters.js?v=1e8fd07b601d"></script>
+<script src="src/10-fx.js?v=1e8fd07b601d"></script>
+<script src="src/11-traffic.js?v=1e8fd07b601d"></script>
+<script src="src/12-player.js?v=1e8fd07b601d"></script>
+<script src="src/13-peds.js?v=1e8fd07b601d"></script>
+<script src="src/14-combat.js?v=1e8fd07b601d"></script>
+<script src="src/15-police.js?v=1e8fd07b601d"></script>
+<script src="src/16-interiors.js?v=1e8fd07b601d"></script>
+<script src="src/17-missions.js?v=1e8fd07b601d"></script>
+<script src="src/18-hud.js?v=1e8fd07b601d"></script>
+<script src="src/19-game.js?v=1e8fd07b601d"></script>
+<script src="src/20-startup.js?v=1e8fd07b601d"></script>
+<script src="src/21-audio.js?v=1e8fd07b601d"></script>
+<script src="src/22-post.js?v=1e8fd07b601d"></script>
+<script src="src/23-quality.js?v=1e8fd07b601d"></script>
+<script src="src/24-touch.js?v=1e8fd07b601d"></script>
+<script src="src/25-lights.js?v=1e8fd07b601d"></script>
+<script src="src/26-boats.js?v=1e8fd07b601d"></script>
+<script src="src/27-aircraft.js?v=1e8fd07b601d"></script>
+<script src="src/28-infrastructure.js?v=1e8fd07b601d"></script>
+<script src="src/29-weather.js?v=1e8fd07b601d"></script>
+<script src="src/30-freeway.js?v=1e8fd07b601d"></script>
+<script src="src/31-rail.js?v=1e8fd07b601d"></script>
+<script src="src/32-rooftops.js?v=1e8fd07b601d"></script>
+<script src="src/33-coast.js?v=1e8fd07b601d"></script>
+<script src="src/33-progress.js?v=1e8fd07b601d"></script>
+<script src="src/34-activities.js?v=1e8fd07b601d"></script>
+<script src="src/34-save.js?v=1e8fd07b601d"></script>
+<script src="src/35-garage.js?v=1e8fd07b601d"></script>
+<script src="src/35-save.js?v=1e8fd07b601d"></script>
+<script src="src/36-city-life.js?v=1e8fd07b601d"></script>
+<script src="src/36-rhythm.js?v=1e8fd07b601d"></script>
+<script src="src/37-camera.js?v=1e8fd07b601d"></script>
+<script src="src/37-deliveries.js?v=1e8fd07b601d"></script>
+<script src="src/38-settings.js?v=1e8fd07b601d"></script>
 <script>
   (function () {
     window.addEventListener('error', function (e) {
