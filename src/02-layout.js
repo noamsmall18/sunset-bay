@@ -1251,28 +1251,149 @@
     return { edge: L.edges[0], dir: 1, lane: 0, x: out.x, z: out.z, y: out.y };
   };
 
-  // Breadth-first next-hop lookup used by police pursuit.
-  Roads.routeStep = function (L, fromNode, targetNode) {
-    if (fromNode === targetNode) return targetNode;
-    var prev = new Int32Array(L.nodes.length).fill(-1);
-    var seen = new Uint8Array(L.nodes.length);
-    var queue = [targetNode];
-    seen[targetNode] = 1;
-    var head = 0;
-    while (head < queue.length) {
-      var cur = queue[head++];
-      var node = L.nodes[cur];
-      for (var k = 0; k < node.edges.length; k++) {
-        var e = L.edges[node.edges[k]];
-        var nb = Roads.otherNode(e, cur);
-        if (seen[nb]) continue;
-        seen[nb] = 1;
-        prev[nb] = cur;
-        if (nb === fromNode) return cur;
-        queue.push(nb);
+  // ------------------------------------------------------------ routing ----
+  // Routing used to be a hop-count breadth-first search. Hop count is the
+  // wrong metric on this graph: a freeway edge can be four hundred metres of
+  // one hop while a downtown block is twelve metres of one hop, so the search
+  // reliably chose the freeway ring for a walk across the street. Everything
+  // now costs travel *time*, which is what a driver actually minimises.
+  var ROUTE_SPEED = { freeway: 27, ramp: 14, avenue: 17, street: 12, foot: 11 };
+  Roads.ROUTE_SPEED = ROUTE_SPEED;
+
+  // Junctions are not free: a signal or a give-way costs a few seconds, and
+  // charging for them is what stops the router from threading twenty side
+  // streets to save one block of avenue.
+  var JUNCTION_COST = 2.4;
+  // Getting on and off the freeway costs more than the ramp geometry says.
+  var RAMP_COST = 6.0;
+
+  Roads.edgeCost = function (e) {
+    var speed = e.kind === 'freeway' ? ROUTE_SPEED.freeway
+      : e.kind === 'ramp' ? ROUTE_SPEED.ramp
+        : (e.lanes > 1 ? ROUTE_SPEED.avenue : ROUTE_SPEED.street);
+    var cost = e.len / speed + JUNCTION_COST;
+    if (e.kind === 'ramp') cost += RAMP_COST;
+    return cost;
+  };
+
+  // Binary min-heap over node ids keyed by a cost array. A plain array scan
+  // was fine for a few hundred nodes; this graph has thousands.
+  function Heap(cost) {
+    this.cost = cost;
+    this.items = [];
+  }
+  Heap.prototype.push = function (id) {
+    var a = this.items, c = this.cost;
+    a.push(id);
+    var i = a.length - 1;
+    while (i > 0) {
+      var p = (i - 1) >> 1;
+      if (c[a[p]] <= c[a[i]]) break;
+      var t = a[p]; a[p] = a[i]; a[i] = t;
+      i = p;
+    }
+  };
+  Heap.prototype.pop = function () {
+    var a = this.items, c = this.cost;
+    var top = a[0], last = a.pop();
+    if (a.length) {
+      a[0] = last;
+      var i = 0, n = a.length;
+      for (;;) {
+        var l = i * 2 + 1, r = l + 1, s = i;
+        if (l < n && c[a[l]] < c[a[s]]) s = l;
+        if (r < n && c[a[r]] < c[a[s]]) s = r;
+        if (s === i) break;
+        var t = a[s]; a[s] = a[i]; a[i] = t;
+        i = s;
       }
     }
-    return targetNode;
+    return top;
+  };
+
+  // A single Dijkstra from the destination gives every node in the city its
+  // next hop toward that destination at once. One pursuit target serves every
+  // patrol car chasing it, and the HUD walks the same field instead of
+  // re-searching the graph once per waypoint - which is what it used to do.
+  var FIELD_CACHE = 6;
+
+  Roads.routeField = function (L, targetNode) {
+    if (!L._fields) L._fields = [];
+    var fields = L._fields, i;
+    for (i = 0; i < fields.length; i++) {
+      if (fields[i].target === targetNode) {
+        // Most-recently-used first, so the cache keeps the live targets.
+        if (i) { var hit = fields.splice(i, 1)[0]; fields.unshift(hit); }
+        return fields[0];
+      }
+    }
+
+    var n = L.nodes.length;
+    var f = fields.length >= FIELD_CACHE ? fields.pop() : null;
+    if (!f || f.next.length !== n) {
+      f = { target: -1, next: new Int32Array(n), cost: new Float64Array(n), done: new Uint8Array(n) };
+    }
+    var next = f.next, cost = f.cost, done = f.done;
+    for (i = 0; i < n; i++) { next[i] = -1; cost[i] = Infinity; done[i] = 0; }
+
+    var heap = new Heap(cost);
+    cost[targetNode] = 0;
+    next[targetNode] = targetNode;
+    heap.push(targetNode);
+    while (heap.items.length) {
+      var cur = heap.pop();
+      if (done[cur]) continue;
+      done[cur] = 1;
+      var node = L.nodes[cur], base = cost[cur];
+      for (var k = 0; k < node.edges.length; k++) {
+        var e = L.edges[node.edges[k]];
+        var nb = e.a === cur ? e.b : e.a;
+        if (done[nb]) continue;
+        var c = base + Roads.edgeCost(e);
+        if (c < cost[nb]) {
+          cost[nb] = c;
+          next[nb] = cur;
+          heap.push(nb);
+        }
+      }
+    }
+    f.target = targetNode;
+    fields.unshift(f);
+    return f;
+  };
+
+  // Next node to drive to on the way to `targetNode`, or the target itself if
+  // the graph does not connect them.
+  Roads.routeStep = function (L, fromNode, targetNode) {
+    if (fromNode === targetNode) return targetNode;
+    var f = Roads.routeField(L, targetNode);
+    var nx = f.next[fromNode];
+    return nx < 0 ? targetNode : nx;
+  };
+
+  // Whole route as node ids, `fromNode` first and `targetNode` last. Walking
+  // the cached field is O(route length) rather than a search per hop.
+  Roads.findPath = function (L, fromNode, targetNode) {
+    var out = [fromNode];
+    if (fromNode === targetNode) return out;
+    var f = Roads.routeField(L, targetNode);
+    if (f.next[fromNode] < 0) return null;
+    var cur = fromNode, guard = L.nodes.length + 2;
+    while (cur !== targetNode && guard-- > 0) {
+      var nx = f.next[cur];
+      if (nx < 0 || nx === cur) return null;
+      out.push(nx);
+      cur = nx;
+    }
+    return cur === targetNode ? out : null;
+  };
+
+  // Estimated seconds of driving from a node to a routed destination.
+  Roads.routeCost = function (L, fromNode, targetNode) {
+    if (fromNode === targetNode) return 0;
+    var f = Roads.routeField(L, targetNode);
+    var c = f.cost[fromNode];
+    return isFinite(c) ? c : Infinity;
   };
 
   Roads.lightGreen = function (light, axis) {

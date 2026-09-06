@@ -387,7 +387,7 @@
     }
     if (ai.panic > 0) {
       ai.panic -= dt * 0.6;
-      target *= 0.35;
+      if (!ai.flee) target *= 0.35;
     }
 
     // ---- unstick: nudged onto a kerb or wedged against a wall
@@ -438,9 +438,25 @@
     }
     // prefer going straight; the grid then reads as through-traffic
     var pick = null;
-    var straight = options.filter(function (o) { return o.turn === 'straight'; });
-    if (straight.length && this.rng.chance(0.62)) pick = straight[this.rng.int(0, straight.length - 1)];
-    else pick = options[this.rng.int(0, options.length - 1)];
+    if (ai.flee) {
+      // A runner takes whichever exit opens the most distance on the player.
+      // It is a one-junction lookahead, not a plan, which is exactly what an
+      // evading driver looks like: mostly away, occasionally into a corner.
+      var pl = this.game.player;
+      var best = -1;
+      for (var oi = 0; oi < options.length; oi++) {
+        var on = L.nodes[options[oi].other];
+        var score = pl ? M.dist(on.x, on.z, pl.pos.x, pl.pos.z) : this.rng();
+        score *= 0.75 + this.rng() * 0.5;
+        if (options[oi].turn === 'straight') score *= 1.12;
+        if (score > best) { best = score; pick = options[oi]; }
+      }
+    }
+    if (!pick) {
+      var straight = options.filter(function (o) { return o.turn === 'straight'; });
+      if (straight.length && this.rng.chance(0.62)) pick = straight[this.rng.int(0, straight.length - 1)];
+      else pick = options[this.rng.int(0, options.length - 1)];
+    }
 
     pick.lane = pick.edge.lanes > 1 ? this.rng.int(0, pick.edge.lanes - 1) : 0;
     ai.edge = pick.edge;
@@ -635,6 +651,30 @@
   Traffic.prototype.spawnMissionCar = function (type, x, z, yaw, color) {
     var v = this.spawnParked(type, x, z, yaw, color);
     v.mission = true;
+    return v;
+  };
+
+  // A car that runs. It joins the ordinary traffic AI - same lanes, same
+  // signals, same collision handling - with the evasion flag set and a cruise
+  // speed well above the flow, so chasing one means real traffic weaving
+  // rather than a scripted rail.
+  Traffic.prototype.spawnRunner = function (type, x, z, opts) {
+    opts = opts || {};
+    var spot = Roads.randomLanePoint(this.L, this.rng, x, z, 0, 40, this._pt);
+    var v = this.acquire(type || 'sports');
+    Roads.laneDir(this.L, spot.edge, spot.dir, this._dir);
+    v.placeAt(spot.x, spot.z, Math.atan2(this._dir.z, this._dir.x));
+    v.dormant = false;
+    v.mission = true;
+    if (opts.color !== undefined && v.setColor) v.setColor(opts.color);
+    v.ai = {
+      edge: spot.edge, dir: spot.dir, lane: spot.lane, t: 0.5,
+      cruise: opts.cruise || 24,
+      patience: 2.6, panic: 0, stuck: 0, honk: 0, changeCd: 99,
+      flee: true
+    };
+    v.u = v.ai.cruise * 0.6;
+    this.active.push(v);
     return v;
   };
 

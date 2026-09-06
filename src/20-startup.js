@@ -62,6 +62,8 @@
     var perfStats = document.getElementById('perfStats');
     var perfClose = document.getElementById('perfClose');
     var errEl = document.getElementById('err');
+    var continueBtn = document.getElementById('continueBtn');
+    var saveInfo = document.getElementById('saveInfo');
 
     function fail(err) {
       errEl.style.display = 'block';
@@ -151,20 +153,47 @@
       setInterval(refreshPerformance, 250);
       refreshPerformance();
 
-      function begin() {
+      // A save on disk turns the title card into a choice. Continue restores
+      // the run before the loop starts, so the first frame the player sees is
+      // already their game rather than a fresh one that then jumps.
+      var saved = SB.Save && SB.Save.available ? SB.Save.read() : null;
+      if (saved) {
+        var sum = SB.Save.summary(saved);
+        var chain = (SB.Missions && SB.Missions.CHAIN) ? SB.Missions.CHAIN.length : 8;
+        saveInfo.textContent = 'Saved run · rank ' + sum.rank + ' ' + sum.rankName +
+          ' · ' + SB.formatMoney(sum.money) + ' · ' + Math.min(sum.missions, chain) + '/' + chain +
+          ' jobs · ' + sum.minutes + ' min played';
+        continueBtn.classList.add('on');
+        startBtn.textContent = 'New game';
+        document.querySelector('.boot-actions').classList.add('has-save');
+      }
+
+      function begin(restore) {
         if (started) return;
         started = true;
+        if (restore && saved) {
+          try { SB.Save.apply(g, saved); }
+          catch (err) { console.warn('[save] could not restore, starting fresh', err); }
+        } else if (SB.Save && SB.Save.available) {
+          // Starting a new game deliberately drops the old run, otherwise the
+          // first autosave silently overwrites it anyway and the player never
+          // got the choice.
+          SB.Save.clear();
+        }
         if (touchMode) goFullscreen();
         boot.classList.add('gone');
         setTimeout(function () { boot.style.display = 'none'; }, 750);
         g.start();
         if (g.audio) g.audio.resume();
+        if (restore && g.hud) g.hud.toast('Run restored', '#8fe0a8');
       }
 
-      startBtn.addEventListener('click', begin);
-      startBtn.addEventListener('touchend', function (e) { e.preventDefault(); begin(); });
+      startBtn.addEventListener('click', function () { begin(false); });
+      startBtn.addEventListener('touchend', function (e) { e.preventDefault(); begin(false); });
+      continueBtn.addEventListener('click', function () { begin(true); });
+      continueBtn.addEventListener('touchend', function (e) { e.preventDefault(); begin(true); });
       window.addEventListener('keydown', function (e) {
-        if (!started && (e.code === 'Enter' || e.code === 'Space')) { e.preventDefault(); begin(); }
+        if (!started && (e.code === 'Enter' || e.code === 'Space')) { e.preventDefault(); begin(!!saved); }
         if (!started) return;
 
         if (e.code === 'F1') {

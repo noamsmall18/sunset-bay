@@ -143,8 +143,10 @@
     if (SB.Police) this.police = new SB.Police(this);
     if (SB.Player) this.player = new SB.Player(this);
     if (SB.Missions) this.missions = new SB.Missions(this);
+    if (SB.Progress) this.progress = new SB.Progress(this);
     if (SB.HUD) this.hud = new SB.HUD(this);
     if (this.player) this.player.spawn();
+    if (SB.Save) SB.Save.attach(this);
   };
 
   Game.prototype.stepFinish = function () {
@@ -205,6 +207,8 @@
     if (this.police) this.police.fixed(dt);
     if (this.combat) this.combat.fixed(dt);
     if (this.missions) this.missions.fixed(dt);
+    if (this.progress) this.progress.fixed(dt);
+    if (SB.Save && SB.Save.tick) SB.Save.tick(dt);
   };
 
   Game.prototype.render = function (dt, alpha) {
@@ -663,6 +667,96 @@
           issues.push('helicopter pad landing probe failed');
         }
       }
+      // ---- routing: the plan must be a real, optimal path ------------------
+      // Two properties, both exact rather than heuristic. Every consecutive
+      // pair on the path must be joined by an actual edge, and every node on
+      // it must satisfy the Bellman condition - no neighbour offers a cheaper
+      // way to the target - which is what makes the route genuinely shortest
+      // by travel time and not merely connected.
+      var Rd = SB.Roads, L = this.layout;
+      var brokenLinks = 0, suboptimal = 0, routed = 0;
+      for (var rt = 0; rt < 24; rt++) {
+        var a0 = L.nodes[(rt * 197) % L.nodes.length];
+        var b0 = L.nodes[(rt * 613 + 41) % L.nodes.length];
+        var path = Rd.findPath(L, a0.id, b0.id);
+        if (!path) continue;
+        routed++;
+        var field = Rd.routeField(L, b0.id);
+        for (var pi2 = 0; pi2 < path.length; pi2++) {
+          var na = L.nodes[path[pi2]];
+          if (pi2 < path.length - 1) {
+            var nb = L.nodes[path[pi2 + 1]];
+            var linked = false, best = Infinity;
+            for (var ei = 0; ei < na.edges.length; ei++) {
+              var ee = L.edges[na.edges[ei]];
+              var other = ee.a === na.id ? ee.b : ee.a;
+              if (other === nb.id) linked = true;
+              var via = field.cost[other] + Rd.edgeCost(ee);
+              if (via < best) best = via;
+            }
+            if (!linked) { brokenLinks++; break; }
+            // 1e-6 of slack for float accumulation, nothing more.
+            if (field.cost[na.id] > best + 1e-6) { suboptimal++; break; }
+          }
+        }
+      }
+      if (routed < 12) issues.push('routing probe only found ' + routed + ' of 24 routes');
+      if (brokenLinks) issues.push('routing returned ' + brokenLinks + ' paths with a non-existent hop');
+      if (suboptimal) issues.push('routing returned ' + suboptimal + ' paths that are not cost-optimal');
+
+      // ---- contracts: every generated job must be runnable -----------------
+      if (this.missions && this.progress && SB.Missions.CONTRACT_TYPES) {
+        var savedXp = this.progress.xp, savedUnlocked = this.progress.unlocked;
+        this.progress.xp = 999999;
+        this.progress.rank = this.progress.rankInfo().rank;
+        this.progress.unlocked = {};
+        this.progress.refreshUnlocks();
+        var kinds = Object.create(null), madeCount = 0;
+        for (var ci2 = 0; ci2 < 120; ci2++) {
+          var con = this.missions.makeContract();
+          if (!con) continue;
+          madeCount++;
+          kinds[con.kind] = 1;
+          if (!(con.reward > 0) || !con.stages || !con.stages.length) {
+            issues.push('contract ' + con.kind + ' generated with no reward or no stages');
+            break;
+          }
+          for (var si2 = 0; si2 < con.stages.length; si2++) {
+            var cs = con.stages[si2];
+            if (cs.x !== undefined && (!isFinite(cs.x) || !isFinite(cs.z))) {
+              issues.push('contract ' + con.kind + ' stage ' + cs.type + ' has a non-finite target');
+              break;
+            }
+          }
+        }
+        var kindCount = Object.keys(kinds).length;
+        if (kindCount < SB.Missions.CONTRACT_TYPES.length) {
+          issues.push('contract generator produced only ' + kindCount + ' of ' +
+            SB.Missions.CONTRACT_TYPES.length + ' job types in ' + madeCount + ' draws');
+        }
+        this.progress.xp = savedXp;
+        this.progress.unlocked = savedUnlocked;
+        this.progress.rank = this.progress.rankInfo().rank;
+      }
+
+      // ---- save: capture and re-apply must be lossless ---------------------
+      if (SB.Save && this.player) {
+        var snap = SB.Save.capture(this);
+        if (!snap) {
+          issues.push('save capture returned nothing');
+        } else {
+          var moneyWas = this.player.money;
+          this.player.money = 1;
+          if (this.progress) { var xpWas = this.progress.xp; this.progress.xp = 0; }
+          SB.Save.apply(this, JSON.parse(JSON.stringify(snap)));
+          if (this.player.money !== moneyWas) {
+            issues.push('save round trip lost money (' + moneyWas + ' -> ' + this.player.money + ')');
+          }
+          if (this.progress && this.progress.xp !== xpWas) {
+            issues.push('save round trip lost progress (' + xpWas + ' -> ' + this.progress.xp + ')');
+          }
+        }
+      }
     } catch (err) {
       issues.push('threw: ' + (err && err.stack ? err.stack : err));
     }
@@ -675,7 +769,8 @@
         this.city.buildings.length + ' buildings, ' + this.interiors.doors.length +
         ' building doors, ' + this.interiors.rooms.length + ' unique furnished interiors, ' +
         generatedRooms + ' generated variants, ' + hotspotTotal + ' interior hotspots, ' +
-        'multi-level/bank/vehicle/car-stability/boat/plane/heli probes clean)');
+        'multi-level/bank/vehicle/car-stability/boat/plane/heli/routing/contract/save ' +
+        'probes clean)');
     }
     this.selfTestIssues = issues;
   };

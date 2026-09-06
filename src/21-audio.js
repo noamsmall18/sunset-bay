@@ -347,13 +347,22 @@
       door: [420, 0.07, 'sine', 0.10],
       reload: [260, 0.09, 'square', 0.09],
       dry: [1500, 0.04, 'square', 0.07],
-      swing: [180, 0.09, 'triangle', 0.10]
+      swing: [180, 0.09, 'triangle', 0.10],
+      // Short, high and quiet: a hit confirmation has to be audible under
+      // automatic fire without becoming the loudest thing in the mix.
+      hitmark: [1760, 0.045, 'square', 0.055],
+      rank: [523, 0.42, 'triangle', 0.20]
     }[kind] || [600, 0.1, 'sine', 0.12];
 
     var o = ctx.createOscillator();
     o.type = cfg[2];
     o.frequency.setValueAtTime(cfg[0], t);
-    if (kind === 'success' || kind === 'cash') {
+    if (kind === 'rank') {
+      o.frequency.setValueAtTime(cfg[0], t);
+      o.frequency.setValueAtTime(cfg[0] * 1.26, t + cfg[1] * 0.30);
+      o.frequency.setValueAtTime(cfg[0] * 1.5, t + cfg[1] * 0.58);
+      o.frequency.setValueAtTime(cfg[0] * 2, t + cfg[1] * 0.80);
+    } else if (kind === 'success' || kind === 'cash') {
       o.frequency.setValueAtTime(cfg[0], t);
       o.frequency.setValueAtTime(cfg[0] * 1.5, t + cfg[1] * 0.45);
     } else if (kind === 'fail') {

@@ -1203,7 +1203,12 @@
       room.vault.material.emissiveIntensity = 1.2;
       room.vault.rotation.z = 0.7;
     }
-    g.bus.emit('toast', { text: 'Vault hit: +' + SB.formatMoney(room.loot) + '  ALARM!' });
+    g.bus.emit('toast', { text: 'Vault hit: +' + SB.formatMoney(room.loot) + '  ALARM!', accent: '#8fe08f' });
+    if (g.progress) {
+      g.progress.stats.robberies++;
+      g.progress.stats.earned += room.loot;
+      g.progress.award(SB.Progress.AWARD.robbery, null);
+    }
     if (g.audio) g.audio.blip('wanted');
   };
 

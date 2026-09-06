@@ -484,9 +484,9 @@
 
     if (p.mode === 'car' && p.vehicle) {
       p.vehicle.damage(c.swat ? 26 : 16, 'gun');
-      p.takeDamage(c.swat ? 5 : 3, 'gun');
+      p.takeDamage(c.swat ? 5 : 3, 'gun', c.x, c.z);
     } else {
-      p.takeDamage(c.swat ? 15 : 10, 'gun');
+      p.takeDamage(c.swat ? 15 : 10, 'gun', c.x, c.z);
     }
   };
 

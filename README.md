@@ -68,7 +68,8 @@ Keyboard and mouse:
 | Reload | `R` |
 | Horn | `H` |
 | Radio / station | `B` / `N` |
-| Map | `M` |
+| Map (scroll to zoom, drag to pan) | `M` |
+| Rank, stats and unlocks | `P` or `Tab` |
 | Controls card | `F1` |
 | Performance settings | `F2` |
 | Cycle weather | `T` (or `WX` on touch) |
@@ -171,8 +172,28 @@ The game detects a touch device and adapts on its own:
   landing, and rotor animation. Air vehicles can leave the city boundary while buildings still
   collide normally. All are discoverable on the map and spawned at
   infrastructure you can reach on foot.
-- **Missions.** An eight-job story chain plus rolling courier drops and stunt
-  jump payouts.
+- **Missions.** A fourteen-job story chain that pushes out into every system the
+  city has - fragile freight across town, running a car off the road, a boat run
+  to a drop off the point, a flight out to the far strip and back, a three-wave
+  siege at the lockup, and a five-star run for the airfield gate.
+- **Contracts.** The chain ends; the work does not. A generator builds real
+  missions - the same stage types, the same runner, the same failure states -
+  out of whatever the map actually contains, and keeps one on offer at all
+  times: courier runs, repossessions, corner sweeps, runners, fragile freight,
+  hold-the-line stands, harbour drops and airlifts. Job types and difficulty
+  open up with rank, and the fee scales with both.
+- **Rank and progress.** Everything you do pays respect as well as money:
+  jobs, contracts, stunt jumps, bank vaults, losing a chase, driving a class of
+  car for the first time, walking into a building you have not been in.
+  Ten ranks, each with a cash bonus and unlocks behind it, and a full stats page
+  on `P` showing the record of the run - work, heat, distance travelled by each
+  means, top speed, interiors found and what is still locked.
+- **Saving.** The run persists. Money, rank, every statistic, story progress,
+  weapons and ammunition, the time of day and the weather are checkpointed to
+  local storage on a slow timer and immediately on anything that matters, and
+  the title card offers CONTINUE with a summary of the saved run. Because the
+  city is deterministic from a fixed seed, a save stores only what you did to
+  it - under two kilobytes - and a save from an older build still loads.
 - **Live weather.** Cycle clear sun, rain, snow, and a forced night front in
   the middle of a session. Rain lays down reflective puddles, reduces tire
   grip, adds foot slips and lightning; snow accumulates in drifts, slows and
@@ -222,6 +243,9 @@ src/29-weather.js     live precipitation, surface conditions, puddles, drifts,
                       snowplows, lightning, and storm lighting
 src/30-freeway.js     elevated freeway decks, parapets and piers
 src/31-rail.js        track, viaduct, stations and the drivable train
+src/32-rooftops.js    rooftop billboards and roof-level detail
+src/33-progress.js    rank, respect, statistics and rank-gated unlocks
+src/34-save.js        capture, restore and autosave of a run
 ```
 
 ## Notes
@@ -249,3 +273,25 @@ src/31-rail.js        track, viaduct, stations and the drivable train
   `actHit('enter')`, `moveAxis()`), never for raw keys. That indirection is the
   only reason the touch layer could be added without touching the player, the
   combat or the interior code.
+- Routing is one Dijkstra from the *destination*, cached, rather than a search
+  per hop. That single field answers "next node toward the target" for every
+  node in the city at once, so the navigation line and every pursuing patrol
+  car share the same computation: 1.9 ms to build a field for a new
+  destination, 0.004 ms per route after that. The previous code ran a complete
+  breadth-first search for every waypoint on the path, about 3.7 ms for a
+  cross-city route and nothing cached between calls. Edges cost travel time
+  rather than one hop each, with a junction penalty and a ramp penalty, so the
+  router prefers an avenue over threading twenty side streets and takes the
+  freeway only when it is genuinely quicker.
+- Precipitation is two shapes, not one shape in two colours: rain is a line
+  segment leaned along its own velocity, snow is a soft round sprite. The sky
+  module still carries its own particle rain as a fallback, but it stands down
+  when the weather module is present - running both drew two rain systems over
+  each other and paid for 2,600 extra particles a frame to do it.
+- A save stores no world. The city, its buildings and all 1,004 interiors are
+  deterministic from a fixed seed, so persistence only has to record the
+  difference the player made.
+- `#dev` now also proves the three systems most likely to break silently: that
+  every routed path is made of real edges and is cost-optimal by the Bellman
+  condition, that every contract type generates a runnable job with finite
+  targets, and that a save captured and re-applied is lossless.

@@ -256,6 +256,8 @@
     this.rainSys = makeRain();
     scene.add(this.rainSys.points);
     this.rainSys.points.visible = false;
+    // Set by SB.Weather when it takes over precipitation.
+    this.precipOwned = false;
   }
 
   Sky.prototype.setHour = function (h) { this.hour = ((h % 24) + 24) % 24; };
@@ -489,7 +491,13 @@
     if (this.rain < 0.02) this.rain = 0;
     this.wetness = M.damp(this.wetness, this.rain > 0.15 ? 1 : 0, 0.18, dt);
 
-    this.rainSys.points.visible = this.rain > 0.04;
+    // The weather module draws better precipitation from this same value -
+    // streaked rain and round flakes rather than square points - so when it
+    // is present this fallback stays off. Running both drew two rain systems
+    // on top of each other and paid for 2,600 extra particles a frame to do
+    // it. Without the weather module (a stripped build, or a failed
+    // construction) this is still the rain.
+    this.rainSys.points.visible = !this.precipOwned && this.rain > 0.04;
     if (this.rainSys.points.visible && camera) {
       this.rainSys.update(dt, camera, this.rain);
     }

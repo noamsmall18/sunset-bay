@@ -229,6 +229,8 @@
       if (g.audio) g.audio.thud(hx, p.pos.y + 1.1, hz);
       if (g.police) g.police.reportCrime('assault', 0.6);
       if (g.fx) g.fx.impact(hx, p.pos.y + 1.1, hz, cx, 0.3, cz, 'flesh');
+      this.reportHit(false, false);
+      this.flushHit();
     }
   };
 
@@ -257,6 +259,7 @@
     for (var i = 0; i < pellets; i++) {
       this.traceShot(w, muzzle, baseSpread);
     }
+    this.flushHit();
 
     if (g.fx) {
       var r = this._ray;
@@ -265,6 +268,29 @@
     if (g.audio) g.audio.gunshot(w, p.pos.x, p.pos.y + 1.4, p.pos.z);
     if (g.peds) g.peds.scare(p.pos.x, p.pos.z, 34);
     if (g.police) g.police.reportCrime('gunfire', 0.55);
+  };
+
+  // A shot that connects has to say so. Without this the only feedback for a
+  // hit is the target eventually falling over, which at range and in a crowd
+  // is no feedback at all.
+  // A shotgun fires nine pellets from one trigger pull. Reporting each one
+  // separately fires nine markers and nine sounds for a single shot, so the
+  // pellets accumulate into a pending result and the shot reports once.
+  Combat.prototype.reportHit = function (headshot, killed) {
+    var pend = this._pendingHit || (this._pendingHit = { any: false, headshot: false, killed: false });
+    pend.any = true;
+    pend.headshot = pend.headshot || !!headshot;
+    pend.killed = pend.killed || !!killed;
+  };
+
+  Combat.prototype.flushHit = function () {
+    var pend = this._pendingHit;
+    if (!pend || !pend.any) return;
+    this.game.bus.emit('shotHit', { headshot: pend.headshot, killed: pend.killed });
+    if (this.game.audio && this.game.audio.blip) {
+      this.game.audio.blip(pend.killed ? 'success' : 'hitmark');
+    }
+    pend.any = false; pend.headshot = false; pend.killed = false;
   };
 
   var _tmpDir = new THREE.Vector3();
@@ -337,15 +363,18 @@
       var head = hy > victim.y + 1.52;
       g.peds.hurt(victim, w.damage * (head ? 2.6 : 1), 'gun', r.dx, r.dz);
       if (g.fx) g.fx.impact(hx, hy, hz, -r.dx, -r.dy, -r.dz, 'flesh');
+      this.reportHit(head, victim.dead);
     } else if (kind === 'cop') {
       var head2 = hy > victim.y + 1.52;
       g.police.hurtCop(victim, w.damage * (head2 ? 2.6 : 1), r.dx, r.dz);
       if (g.fx) g.fx.impact(hx, hy, hz, -r.dx, -r.dy, -r.dz, 'flesh');
       g.police.reportCrime('shootCop', 1);
+      this.reportHit(head2, victim.dead);
     } else if (kind === 'enemy') {
       var head3 = hy > victim.y + 1.52;
       g.missions.enemies.hurt(victim, w.damage * (head3 ? 2.6 : 1), r.dx, r.dz);
       if (g.fx) g.fx.impact(hx, hy, hz, -r.dx, -r.dy, -r.dz, 'flesh');
+      this.reportHit(head3, victim.dead);
     } else if (kind === 'car') {
       victim.damage(w.damage * 1.5, 'gun');
       if (victim.dormant) victim.dormant = false;
