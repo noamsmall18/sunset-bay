@@ -191,7 +191,7 @@
     var miss = Math.hypot(cx - p.pos.x, cy - (p.pos.y + 0.95), cz - p.pos.z);
     if (miss > (p.mode === 'car' ? 1.1 : 0.5)) return;
     if (g.world.blocked(ex, ey, ez, p.pos.x, p.pos.y + 1, p.pos.z)) return;
-    p.takeDamage(p.mode === 'car' ? 4 : 11, 'gun');
+    p.takeDamage(p.mode === 'car' ? 4 : 11, 'gun', e.x, e.z);
   };
   Enemies.prototype.render = function (dt) {
     for (var i = 0; i < this.list.length; i++) {
@@ -303,6 +303,82 @@
         { type: 'escape', text: 'Lose them' },
         { type: 'drive', x: -344, z: 322, r: 11, text: 'Get to the boat' }
       ]
+    },
+
+    // The chain used to end here, which left the back half of the map - the
+    // water, the airport, the freeway - with no authored reason to go there.
+    // These six push the story out into the systems the city already had.
+    {
+      id: 'glasswork', name: 'Glasswork',
+      giver: { x: 232, z: 68 },
+      brief: 'A crate of gallery glass, across town, in one piece. Every scratch comes out of your end.',
+      reward: 5200, time: 210,
+      stages: [
+        { type: 'car', text: 'Get a vehicle' },
+        { type: 'goto', x: 232, z: 68, r: 10, text: 'Load the crate' },
+        { type: 'cargo', x: -262, z: -178, r: 10, fragility: 0.14, text: 'Deliver it intact' }
+      ]
+    },
+    {
+      id: 'runaway', name: 'Runaway',
+      giver: { x: 62, z: -96 },
+      brief: 'One of ours took a car and a lot of money that was not his. Bring the car back. He can walk.',
+      reward: 7400,
+      stages: [
+        { type: 'car', text: 'Get behind the wheel' },
+        { type: 'chase', key: 'sports', x: 148, z: -96, cruise: 25, seconds: 120, color: 0x9b1f2f,
+          text: 'Run him off the road' },
+        { type: 'drive', x: 62, z: -96, r: 10, text: 'Report back to Marco' }
+      ]
+    },
+    {
+      id: 'harbour-light', name: 'Harbour Light',
+      giver: { x: -430, z: 238 },
+      brief: 'A drop is floating off the point. Take a boat, pick it up, and come back before the coastguard notices.',
+      reward: 8600, time: 240,
+      stages: [
+        { type: 'boat', text: 'Get on the water' },
+        { type: 'sail', x: -640, z: 150, r: 18, text: 'Reach the drop' },
+        { type: 'pickup', x: -640, z: 150, r: 16, text: 'Haul it aboard' },
+        { type: 'sail', x: -430, z: 250, r: 20, text: 'Back to the marina' }
+      ]
+    },
+    {
+      id: 'last-flight', name: 'Last Flight Out',
+      giver: { x: 318, z: -262 },
+      brief: 'There is a plane at the field with your name on the manifest. Get it in the air and put it down at the far strip.',
+      reward: 9800,
+      stages: [
+        { type: 'goto', x: 318, z: -262, r: 14, text: 'Get to the airfield' },
+        { type: 'fly', text: 'Get airborne' },
+        { type: 'flyTo', x: -260, z: -300, r: 60, text: 'Fly to the north marker' },
+        { type: 'flyTo', x: 318, z: -262, r: 55, text: 'Bring it back to the field' }
+      ]
+    },
+    {
+      id: 'the-siege', name: 'The Siege',
+      giver: { x: -186, z: 322 },
+      brief: 'They know where the lockup is. Get there first and hold it. Three crews, back to back.',
+      reward: 12000,
+      stages: [
+        { type: 'goto', x: -186, z: 322, r: 12, text: 'Get to the lockup' },
+        { type: 'wave', tag: 'siege', spread: 17, health: 100, waves: [3, 4, 5],
+          text: 'Hold the lockup' },
+        { type: 'wait', seconds: 2, text: 'Catch your breath' }
+      ]
+    },
+    {
+      id: 'sunset-run', name: 'Sunset Run',
+      giver: { x: -344, z: -14 },
+      brief: 'Last one. Everything you have taken, in one car, out of the city. They will all be looking.',
+      reward: 26000,
+      stages: [
+        { type: 'car', text: 'Get the car' },
+        { type: 'goto', x: -104, z: -96, r: 11, text: 'Collect the last package' },
+        { type: 'heat', stars: 5, text: 'Every unit in Sunset Bay' },
+        { type: 'cargo', x: 318, z: 322, r: 12, fragility: 0.06, text: 'Get it to the airfield gate' },
+        { type: 'escape', text: 'Lose them for good' }
+      ]
     }
   ];
 
@@ -321,9 +397,20 @@
     this.blips = [];
     this.failReason = '';
     this.resultTimer = 0;
-    this.sideTimer = 30;
-    this.side = null;
+    this.contract = null;
+    this.contractTimer = 30;
+    this.contractLife = 0;
+    this.contractSeq = 1;
     this.stunts = 0;
+    this.contractsDone = 0;
+    this.runner = null;
+    this.runnerTimer = 0;
+    this.runnerStopped = 0;
+    this.cargo = 100;
+    this.cargoHealth = -1;
+    this.cargoVehicle = null;
+    this.waveIndex = 0;
+    this.waveTimer = 0;
     this.rng = M.rng(2024);
 
     var self = this;
@@ -349,7 +436,7 @@
     } else {
       var m = this.current();
       if (m) this.addBlip(m.giver.x, m.giver.z, 0xffd34d, 4.5, 'mission');
-      if (this.side) this.addBlip(this.side.x, this.side.z, 0x66e07a, 6, 'side');
+      if (this.contract) this.addBlip(this.contract.giver.x, this.contract.giver.z, 0x66e07a, 5, 'contract');
     }
     if (this.game.interiors) {
       for (var i = 0; i < this.game.interiors.doors.length; i++) {
@@ -381,8 +468,11 @@
       var reach = p.mode === 'car' ? 6.5 : 4.0;
       if (m && !p.dead && M.dist(p.pos.x, p.pos.z, m.giver.x, m.giver.z) < reach) {
         this.begin(m);
-      } else if (this.side && M.dist(p.pos.x, p.pos.z, this.side.x, this.side.z) < this.side.r) {
-        this.completeSide();
+      } else if (this.contract && !p.dead &&
+        M.dist(p.pos.x, p.pos.z, this.contract.giver.x, this.contract.giver.z) < reach + 2) {
+        var c = this.contract;
+        this.contract = null;
+        this.begin(c);
       }
       return;
     }
@@ -438,6 +528,20 @@
       g.police.heat = Math.max(g.police.heat, st.stars + 0.2);
       g.police.stars = Math.min(5, Math.floor(g.police.heat));
       g.bus.emit('wantedUp', g.police.stars);
+    } else if (st.type === 'chase' && g.traffic) {
+      this.runner = g.traffic.spawnRunner(st.key || 'sports', st.x, st.z,
+        { cruise: st.cruise || 24, color: st.color });
+      this.runnerTimer = st.seconds || 90;
+    } else if (st.type === 'cargo') {
+      // Cargo is an integrity value the player can lose by driving badly.
+      // It only exists while the stage is live, so nothing else has to know
+      // about it.
+      this.cargo = 100;
+      this.cargoHealth = -1;
+      this.cargoVehicle = null;
+    } else if (st.type === 'wave') {
+      this.waveIndex = 0;
+      this.waveTimer = 0;
     }
     if (st.x !== undefined) { this.ambushX = st.x; this.ambushZ = st.z; }
   };
@@ -482,8 +586,109 @@
         return !g.police || g.police.stars === 0;
       case 'heat':
         return this.stageTimer > 0.4;
+
+      case 'chase': {
+        var run = this.runner;
+        if (!run) return true;
+        this.runnerTimer -= dt;
+        // Keep the objective marker on the car rather than on a fixed point.
+        if (this.blips.length && this.blips[0].marker) {
+          this.blips[0].x = run.pos.x;
+          this.blips[0].z = run.pos.z;
+          this.blips[0].marker.position.set(run.pos.x, run.pos.y + 0.05, run.pos.z);
+        }
+        if (run.destroyed) {
+          this.clearRunner();
+          return true;
+        }
+        // Ramming it to a stop counts as well as shooting it out: at walking
+        // pace with the player right on top of it, the driver gives up.
+        if (run.speed && run.speed() < 2.2 && M.dist(p.pos.x, p.pos.z, run.pos.x, run.pos.z) < 11) {
+          this.runnerStopped = (this.runnerStopped || 0) + dt;
+          if (this.runnerStopped > 1.6) { this.clearRunner(); return true; }
+        } else {
+          this.runnerStopped = 0;
+        }
+        if (this.runnerTimer <= 0) { this.clearRunner(); this.fail('The runner got away'); return false; }
+        if (M.dist(p.pos.x, p.pos.z, run.pos.x, run.pos.z) > (st.loseAt || 340)) {
+          this.clearRunner(); this.fail('Lost the runner'); return false;
+        }
+        return false;
+      }
+
+      case 'cargo': {
+        if (p.mode !== 'car' || !p.vehicle) { this.cargoHealth = -1; return false; }
+        var veh = p.vehicle;
+        // Cargo integrity tracks the car's own damage model rather than a
+        // second collision system: whatever hurts the car hurts the load.
+        if (this.cargoHealth < 0 || this.cargoVehicle !== veh) {
+          this.cargoVehicle = veh;
+          this.cargoHealth = veh.health;
+        }
+        var lost = this.cargoHealth - veh.health;
+        if (lost > 0) {
+          this.cargoHealth = veh.health;
+          var before = this.cargo;
+          this.cargo -= lost * (st.fragility || 0.12);
+          if (Math.floor(before / 20) !== Math.floor(this.cargo / 20) && this.game.hud) {
+            this.game.hud.toast('Cargo at ' + Math.max(0, Math.round(this.cargo)) + '%', '#e0553f');
+          }
+        }
+        if (this.cargo <= 0) { this.fail('The cargo did not survive'); return false; }
+        return M.dist(p.pos.x, p.pos.z, st.x, st.z) < (st.r || 9);
+      }
+
+      case 'wave': {
+        var waves = st.waves || [];
+        if (this.waveIndex >= waves.length) return this.enemies.aliveCount(st.tag) === 0;
+        if (this.enemies.aliveCount(st.tag) === 0) {
+          this.waveTimer -= dt;
+          if (this.waveTimer <= 0) {
+            var n = waves[this.waveIndex++];
+            for (var wi = 0; wi < n; wi++) {
+              var wa = (wi / n) * M.TAU + this.rng() * 0.7;
+              var rr = (st.spread || 16) * (0.6 + this.rng() * 0.6);
+              this.enemies.spawn(this.ambushX + Math.cos(wa) * rr,
+                this.ambushZ + Math.sin(wa) * rr, { tag: st.tag, health: st.health || 95 });
+            }
+            this.waveTimer = 2.6;
+            if (this.game.hud && this.waveIndex < waves.length) {
+              this.game.hud.toast('Wave ' + this.waveIndex + ' of ' + waves.length, '#e0553f');
+            }
+          }
+        }
+        return false;
+      }
+
+      case 'boat':
+        return p.mode === 'boat';
+      case 'fly':
+        return p.mode === 'plane' || p.mode === 'heli';
+      case 'sail':
+        if (p.mode !== 'boat') return false;
+        return M.dist(p.pos.x, p.pos.z, st.x, st.z) < (st.r || 14);
+      case 'flyTo':
+        if (p.mode !== 'plane' && p.mode !== 'heli') return false;
+        return M.dist(p.pos.x, p.pos.z, st.x, st.z) < (st.r || 30);
+      case 'wait':
+        return this.stageTimer >= (st.seconds || 3);
     }
     return true;
+  };
+
+  Missions.prototype.clearRunner = function () {
+    var t = this.game.traffic;
+    if (this.runner && t) {
+      // recycle() only returns the body to the pool; the caller owns removing
+      // it from the live list, or the AI keeps driving a hidden car.
+      var i = t.active.indexOf(this.runner);
+      if (i >= 0) t.active.splice(i, 1);
+      i = t.loose.indexOf(this.runner);
+      if (i >= 0) t.loose.splice(i, 1);
+      if (!this.game.player || this.game.player.vehicle !== this.runner) t.recycle(this.runner);
+    }
+    this.runner = null;
+    this.runnerStopped = 0;
   };
 
   Missions.prototype.stageText = function () {
@@ -497,21 +702,40 @@
       t += ' (' + Math.ceil(Math.max(0, st.seconds - this.stageTimer)) + 's)';
     } else if (st.type === 'escape' && this.game.police) {
       t += ' (' + this.game.police.stars + ' stars)';
+    } else if (st.type === 'chase') {
+      t += ' (' + Math.ceil(Math.max(0, this.runnerTimer || 0)) + 's)';
+    } else if (st.type === 'cargo') {
+      t += ' (cargo ' + Math.max(0, Math.round(this.cargo || 0)) + '%)';
+    } else if (st.type === 'wave') {
+      var total = (st.waves || []).length;
+      t += ' (wave ' + Math.min(total, Math.max(1, this.waveIndex || 1)) + '/' + total +
+        ', ' + this.enemies.aliveCount(st.tag) + ' left)';
     }
     return t;
   };
 
   Missions.prototype.complete = function () {
     var m = this.active;
+    this.clearRunner();
     this.active = null;
     this.state = 'idle';
     this.enemies.clear();
-    this.completed.push(m.id);
-    this.index = Math.min(CHAIN.length, this.index + 1);
+    if (m.contract) {
+      this.contractsDone++;
+      this.contractTimer = 12;
+    } else {
+      this.completed.push(m.id);
+      this.index = Math.min(CHAIN.length, this.index + 1);
+    }
     this.game.player.money += m.reward;
     this.resultTimer = 4.2;
-    this.result = { ok: true, name: m.name, reward: m.reward };
+    this.result = { ok: true, name: m.name, reward: m.reward, minor: !!m.contract };
     this.refreshBlips();
+    if (m.contract && this.game.progress) {
+      this.game.progress.stats.sideJobs++;
+      this.game.progress.award(SB.Progress.AWARD.sideJob, null);
+      this.game.progress.stats.earned += m.reward;
+    }
     this.game.bus.emit('missionComplete', m);
     if (this.game.audio) this.game.audio.blip('success');
   };
@@ -519,11 +743,13 @@
   Missions.prototype.fail = function (why) {
     if (!this.active) return;
     var m = this.active;
+    this.clearRunner();
     this.active = null;
     this.state = 'idle';
     this.enemies.clear();
     this.resultTimer = 4.2;
     this.result = { ok: false, name: m.name, why: why };
+    if (m.contract) this.contractTimer = 18;
     this.refreshBlips();
     this.game.bus.emit('missionFailed', m);
     if (this.game.audio) this.game.audio.blip('fail');
@@ -531,34 +757,226 @@
 
   Missions.prototype.abandonIfFar = function () { };
 
-  // ------------------------------------------------------- side jobs -------
-  // A rolling courier drop, always available between story missions.
-  Missions.prototype.offerSide = function (dt) {
-    if (this.side) return;
-    this.sideTimer -= dt;
-    if (this.sideTimer > 0) return;
-    this.sideTimer = 25;
+  // ------------------------------------------------------- contracts -------
+  // The story chain is finite. Contracts are not: a generator builds a real
+  // mission - same stage types, same runner, same failure states - out of
+  // whatever the map actually contains, and keeps one on offer at all times.
+  // This is what the sandbox does with you once the chain is done.
+
+  var CONTRACT_TYPES = [
+    {
+      id: 'courier', name: 'Courier run', weight: 3, minRank: 1, base: 340,
+      build: function (ms, r) {
+        var stages = [{ type: 'car', text: 'Get a vehicle' }];
+        var drops = 1 + Math.floor(r() * 3);
+        for (var i = 0; i < drops; i++) {
+          var pt = ms.roadPoint(120, 460);
+          stages.push({ type: 'drive', x: pt.x, z: pt.z, r: 9,
+            text: 'Drop ' + (i + 1) + ' of ' + drops });
+        }
+        return { stages: stages, time: 70 + drops * 55, per: drops };
+      }
+    },
+    {
+      id: 'repo', name: 'Repossession', weight: 2, minRank: 1, base: 700,
+      build: function (ms, r) {
+        var car = ms.roadPoint(90, 380);
+        var yard = ms.roadPoint(160, 520);
+        var keys = ['sedan', 'sports', 'muscle', 'suv', 'compact', 'hatchback', 'pickup', 'van'];
+        return {
+          stages: [
+            { type: 'spawnCar', key: keys[Math.floor(r() * keys.length)], x: car.x, z: car.z,
+              color: 0x2b4d86, text: 'Find the vehicle' },
+            { type: 'stealTarget', heat: 2, text: 'Take it' },
+            { type: 'drive', x: yard.x, z: yard.z, r: 10, keepCar: true, text: 'Deliver it to the yard' }
+          ], time: 210
+        };
+      }
+    },
+    {
+      id: 'sweep', name: 'Clear the corner', weight: 2, minRank: 2, base: 900,
+      build: function (ms, r) {
+        var at = ms.roadPoint(120, 430);
+        var n = 3 + Math.floor(r() * 3);
+        return {
+          stages: [
+            { type: 'goto', x: at.x, z: at.z, r: 14, text: 'Get to the corner' },
+            { type: 'ambush', count: n, tag: 'sweep', spread: 11, text: 'Clear them out' }
+          ], per: n
+        };
+      }
+    },
+    {
+      id: 'runner', name: 'Runner', weight: 2, minRank: 2, base: 1100,
+      build: function (ms, r) {
+        var at = ms.roadPoint(80, 300);
+        var back = ms.roadPoint(120, 400);
+        return {
+          stages: [
+            { type: 'car', text: 'Get behind the wheel' },
+            { type: 'chase', key: r() < 0.5 ? 'sports' : 'muscle', x: at.x, z: at.z,
+              cruise: 22 + r() * 6, seconds: 105, text: 'Stop the runner' },
+            { type: 'drive', x: back.x, z: back.z, r: 10, text: 'Drop the car off' }
+          ]
+        };
+      }
+    },
+    {
+      id: 'freight', name: 'Fragile freight', weight: 2, minRank: 3, base: 1250,
+      build: function (ms, r) {
+        var to = ms.roadPoint(220, 560);
+        return {
+          stages: [
+            { type: 'car', text: 'Get a vehicle' },
+            { type: 'cargo', x: to.x, z: to.z, r: 10, fragility: 0.10 + r() * 0.08,
+              text: 'Deliver it in one piece' }
+          ], time: 200
+        };
+      }
+    },
+    {
+      id: 'hold', name: 'Hold the line', weight: 1, minRank: 5, unlock: 'heavyJobs', base: 2200,
+      build: function (ms, r) {
+        var at = ms.roadPoint(140, 420);
+        var waves = [3, 4, 5 + Math.floor(r() * 2)];
+        return {
+          stages: [
+            { type: 'goto', x: at.x, z: at.z, r: 13, text: 'Get into position' },
+            { type: 'wave', tag: 'hold', spread: 16, health: 100, waves: waves, text: 'Hold it' }
+          ], per: waves.length
+        };
+      }
+    },
+    {
+      id: 'harbour', name: 'Harbour drop', weight: 1, minRank: 3, base: 1600,
+      build: function (ms, r) {
+        var m = ms.marina();
+        if (!m) return null;
+        var far = { x: m.x - 90 - r() * 130, z: m.z + (r() - 0.5) * 240 };
+        return {
+          stages: [
+            { type: 'boat', text: 'Get on the water' },
+            { type: 'sail', x: far.x, z: far.z, r: 20, text: 'Reach the drop' },
+            { type: 'pickup', x: far.x, z: far.z, r: 18, text: 'Haul it aboard' },
+            { type: 'sail', x: m.x, z: m.z, r: 24, text: 'Back to the marina' }
+          ], time: 260, giver: { x: m.x, z: m.z }
+        };
+      }
+    },
+    {
+      id: 'airlift', name: 'Airlift', weight: 1, minRank: 7, unlock: 'airJobs', base: 3000,
+      build: function (ms, r) {
+        var a = ms.airfield();
+        if (!a) return null;
+        var far = { x: a.x + (r() - 0.5) * 700, z: a.z + 260 + r() * 300 };
+        return {
+          stages: [
+            { type: 'fly', text: 'Get airborne' },
+            { type: 'flyTo', x: far.x, z: far.z, r: 65, text: 'Reach the drop zone' },
+            { type: 'flyTo', x: a.x, z: a.z, r: 60, text: 'Return to the field' }
+          ], giver: { x: a.x, z: a.z }
+        };
+      }
+    }
+  ];
+  Missions.CONTRACT_TYPES = CONTRACT_TYPES;
+
+  // A road point at a sensible distance from the player, so a contract never
+  // asks you to drive to the spot you are already parked on.
+  Missions.prototype.roadPoint = function (minD, maxD) {
     var p = this.game.player;
-    var pt = { x: 0, z: 0 };
-    var spot = Roads.randomLanePoint(this.L, this.rng, p.pos.x, p.pos.z, 140, 420, pt);
-    this.side = {
-      x: spot.x, z: spot.z, r: 8,
-      reward: 220 + Math.floor(this.rng() * 320),
-      name: 'Courier drop'
-    };
-    this.refreshBlips();
+    var out = { x: 0, z: 0 };
+    var spot = Roads.randomLanePoint(this.L, this.rng, p ? p.pos.x : 0, p ? p.pos.z : 0,
+      minD, maxD, out);
+    return { x: spot.x, z: spot.z };
   };
 
-  Missions.prototype.completeSide = function () {
-    var s = this.side;
-    this.side = null;
-    this.sideTimer = 40;
-    this.game.player.money += s.reward;
-    this.resultTimer = 2.6;
-    this.result = { ok: true, name: s.name, reward: s.reward, minor: true };
-    this.refreshBlips();
-    if (this.game.audio) this.game.audio.blip('cash');
+  Missions.prototype.marina = function () {
+    var t = this.game.transport;
+    if (!t || !t.landmarks) return null;
+    var list = t.landmarks.filter(function (l) { return l.kind === 'marina'; });
+    return list.length ? list[Math.floor(this.rng() * list.length)] : null;
   };
+
+  Missions.prototype.airfield = function () {
+    var t = this.game.transport;
+    if (!t || !t.landmarks) return null;
+    var list = t.landmarks.filter(function (l) { return l.kind === 'airport'; });
+    return list.length ? list[0] : null;
+  };
+
+  Missions.prototype.rank = function () {
+    return this.game.progress ? this.game.progress.rank : 1;
+  };
+
+  Missions.prototype.makeContract = function () {
+    var rank = this.rank(), prog = this.game.progress;
+    var pool = [];
+    for (var i = 0; i < CONTRACT_TYPES.length; i++) {
+      var t = CONTRACT_TYPES[i];
+      if (rank < t.minRank) continue;
+      if (t.unlock && prog && !prog.has(t.unlock)) continue;
+      for (var w = 0; w < t.weight; w++) pool.push(t);
+    }
+    if (!pool.length) pool.push(CONTRACT_TYPES[0]);
+    var self = this;
+    var rnd = function () { return self.rng(); };
+    // A type whose anchors do not exist in this world (no marina, no
+    // airfield) returns null; fall back rather than offering a broken job.
+    for (var attempt = 0; attempt < 6; attempt++) {
+      var type = pool[Math.floor(this.rng() * pool.length)];
+      var spec = type.build(this, rnd);
+      if (!spec) continue;
+      var giver = spec.giver || this.roadPoint(40, 200);
+      // Length adds to the fee but does not multiply it: a five-drop courier
+      // run is worth more than a two-drop one, not two and a half times more,
+      // or the board out-earns the story chain by rank four.
+      var length = 1 + ((spec.per || 1) - 1) * 0.45;
+      var scale = 1 + (rank - 1) * 0.16;
+      var reward = Math.round((type.base * length * scale) / 10) * 10;
+      return {
+        id: 'contract-' + type.id + '-' + (this.contractSeq++),
+        contract: true,
+        kind: type.id,
+        name: type.name,
+        giver: { x: giver.x, z: giver.z },
+        brief: 'Contract work, ' + SB.formatMoney(reward) + '. No questions.',
+        reward: reward,
+        time: spec.time || 0,
+        stages: spec.stages
+      };
+    }
+    return null;
+  };
+
+  Missions.prototype.offerSide = function (dt) {
+    // Contracts open up at rank 2 so the first minutes stay pointed at the
+    // story; before that the board is simply not there yet.
+    var prog = this.game.progress;
+    if (prog && !prog.has('jobBoard')) { this.contract = null; return; }
+    if (this.contract) {
+      // An ignored contract goes stale and is replaced, so the board is never
+      // one job you already decided not to take.
+      this.contractLife -= dt;
+      if (this.contractLife <= 0) { this.contract = null; this.contractTimer = 6; this.refreshBlips(); }
+      return;
+    }
+    this.contractTimer -= dt;
+    if (this.contractTimer > 0) return;
+    this.contractTimer = 20;
+    var c = this.makeContract();
+    if (!c) return;
+    this.contract = c;
+    this.contractLife = 240;
+    this.refreshBlips();
+    if (this.game.hud) this.game.hud.toast('Contract available: ' + c.name, '#66e07a');
+  };
+
+  // ------------------------------------------------------ legacy shim ------
+  // Nothing calls completeSide any more - a contract is a real mission and
+  // finishes through complete(). Kept as a no-op so an older save or a stray
+  // call cannot throw.
+  Missions.prototype.completeSide = function () { };
 
   // ------------------------------------------------------ stunt tracking ---
   Missions.prototype.checkStunt = function (v) {
@@ -566,6 +984,11 @@
     var payout = Math.floor(v.airTime * 340 + v.speed() * 12);
     this.game.player.money += payout;
     this.stunts++;
+    if (this.game.progress) {
+      this.game.progress.stats.stunts++;
+      this.game.progress.stats.earned += payout;
+      this.game.progress.award(SB.Progress.AWARD.stunt, null);
+    }
     this.resultTimer = 2.4;
     this.result = { ok: true, name: 'Stunt jump', reward: payout, minor: true };
     if (this.game.audio) this.game.audio.blip('cash');

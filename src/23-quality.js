@@ -185,6 +185,9 @@
       game.peds.maxPeds = s.peds;
       if (game.peds.applyBudget) game.peds.applyBudget();
     }
+    // The daily rhythm scales the parked cap against the tier's value, so it
+    // has to be told the tier changed or it keeps scaling the old one.
+    if (game.rhythm && game.rhythm.rebase) game.rhythm.rebase();
     if (game.interiors && game.interiors.doors) {
       // Door markers are two separate additive meshes per address. They are
       // helpful on Medium/High, but hiding this decorative layer on Low saves

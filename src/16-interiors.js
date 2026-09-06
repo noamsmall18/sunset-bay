@@ -1203,7 +1203,12 @@
       room.vault.material.emissiveIntensity = 1.2;
       room.vault.rotation.z = 0.7;
     }
-    g.bus.emit('toast', { text: 'Vault hit: +' + SB.formatMoney(room.loot) + '  ALARM!' });
+    g.bus.emit('toast', { text: 'Vault hit: +' + SB.formatMoney(room.loot) + '  ALARM!', accent: '#8fe08f' });
+    if (g.progress) {
+      g.progress.stats.robberies++;
+      g.progress.stats.earned += room.loot;
+      g.progress.award(SB.Progress.AWARD.robbery, null);
+    }
     if (g.audio) g.audio.blip('wanted');
   };
 
@@ -1234,6 +1239,8 @@
     v.destroyed = false;
     v.smoking = false;
     v.burning = 0;
+    // A respray that leaves the wing caved in is not a respray.
+    if (v.repairBody) v.repairBody();
     v.setColor(SB.PAINTS[Math.floor(Math.random() * SB.PAINTS.length)]);
     sp.cooldown = 8;
     if (this.game.police) this.game.police.clearWanted();

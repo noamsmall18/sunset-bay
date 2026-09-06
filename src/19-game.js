@@ -9,6 +9,10 @@
     this.bus = new SB.Bus();
     this.dev = location.hash.indexOf('dev') >= 0;
     this.paused = false;
+    // Whether a full-screen panel owns the input. Initialised here so it is
+    // always a boolean: code that saves and restores it should not have to
+    // deal with undefined on the first read.
+    this.uiBlocking = false;
     this.time = 0;
     this.cullDistance = 1e9;
     this._postCtx = { night: 0, wet: 0, sunDir: null, sunColor: null, dt: 0.016 };
@@ -143,8 +147,13 @@
     if (SB.Police) this.police = new SB.Police(this);
     if (SB.Player) this.player = new SB.Player(this);
     if (SB.Missions) this.missions = new SB.Missions(this);
+    if (SB.Progress) this.progress = new SB.Progress(this);
+    if (SB.Garage) this.garage = new SB.Garage(this);
+    if (SB.Rhythm) this.rhythm = new SB.Rhythm(this);
+    if (SB.CameraModes) this.cameras = new SB.CameraModes(this);
     if (SB.HUD) this.hud = new SB.HUD(this);
     if (this.player) this.player.spawn();
+    if (SB.Save) SB.Save.attach(this);
   };
 
   Game.prototype.stepFinish = function () {
@@ -205,12 +214,20 @@
     if (this.police) this.police.fixed(dt);
     if (this.combat) this.combat.fixed(dt);
     if (this.missions) this.missions.fixed(dt);
+    if (this.progress) this.progress.fixed(dt);
+    if (this.garage) this.garage.fixed(dt);
+    if (this.rhythm) this.rhythm.fixed(dt);
+    if (SB.Save && SB.Save.tick) SB.Save.tick(dt);
   };
 
   Game.prototype.render = function (dt, alpha) {
     SB._game = this;
     var cam = this.camera;
     if (this.player) this.player.render(dt, cam);
+    // View modes layer on top of the follow rig the player just positioned,
+    // so 'follow' costs nothing and everything downstream - the sky, the
+    // culling, the post pipeline - sees one camera as it always did.
+    if (this.cameras) this.cameras.render(dt, cam);
     this.sky.update(dt, cam, this.wetMats);
     this.world.wetness = this.sky.wetness;
     if (this.weather) this.weather.render(dt);
@@ -663,6 +680,226 @@
           issues.push('helicopter pad landing probe failed');
         }
       }
+      // ---- routing: the plan must be a real, optimal path ------------------
+      // Two properties, both exact rather than heuristic. Every consecutive
+      // pair on the path must be joined by an actual edge, and every node on
+      // it must satisfy the Bellman condition - no neighbour offers a cheaper
+      // way to the target - which is what makes the route genuinely shortest
+      // by travel time and not merely connected.
+      var Rd = SB.Roads, L = this.layout;
+      var brokenLinks = 0, suboptimal = 0, routed = 0;
+      for (var rt = 0; rt < 24; rt++) {
+        var a0 = L.nodes[(rt * 197) % L.nodes.length];
+        var b0 = L.nodes[(rt * 613 + 41) % L.nodes.length];
+        var path = Rd.findPath(L, a0.id, b0.id);
+        if (!path) continue;
+        routed++;
+        var field = Rd.routeField(L, b0.id);
+        for (var pi2 = 0; pi2 < path.length; pi2++) {
+          var na = L.nodes[path[pi2]];
+          if (pi2 < path.length - 1) {
+            var nb = L.nodes[path[pi2 + 1]];
+            var linked = false, best = Infinity;
+            for (var ei = 0; ei < na.edges.length; ei++) {
+              var ee = L.edges[na.edges[ei]];
+              var other = ee.a === na.id ? ee.b : ee.a;
+              if (other === nb.id) linked = true;
+              var via = field.cost[other] + Rd.edgeCost(ee);
+              if (via < best) best = via;
+            }
+            if (!linked) { brokenLinks++; break; }
+            // 1e-6 of slack for float accumulation, nothing more.
+            if (field.cost[na.id] > best + 1e-6) { suboptimal++; break; }
+          }
+        }
+      }
+      if (routed < 12) issues.push('routing probe only found ' + routed + ' of 24 routes');
+      if (brokenLinks) issues.push('routing returned ' + brokenLinks + ' paths with a non-existent hop');
+      if (suboptimal) issues.push('routing returned ' + suboptimal + ' paths that are not cost-optimal');
+
+      // ---- contracts: every generated job must be runnable -----------------
+      if (this.missions && this.progress && SB.Missions.CONTRACT_TYPES) {
+        var savedXp = this.progress.xp, savedUnlocked = this.progress.unlocked;
+        this.progress.xp = 999999;
+        this.progress.rank = this.progress.rankInfo().rank;
+        this.progress.unlocked = {};
+        this.progress.refreshUnlocks();
+        var kinds = Object.create(null), madeCount = 0;
+        for (var ci2 = 0; ci2 < 120; ci2++) {
+          var con = this.missions.makeContract();
+          if (!con) continue;
+          madeCount++;
+          kinds[con.kind] = 1;
+          if (!(con.reward > 0) || !con.stages || !con.stages.length) {
+            issues.push('contract ' + con.kind + ' generated with no reward or no stages');
+            break;
+          }
+          for (var si2 = 0; si2 < con.stages.length; si2++) {
+            var cs = con.stages[si2];
+            if (cs.x !== undefined && (!isFinite(cs.x) || !isFinite(cs.z))) {
+              issues.push('contract ' + con.kind + ' stage ' + cs.type + ' has a non-finite target');
+              break;
+            }
+          }
+        }
+        var kindCount = Object.keys(kinds).length;
+        if (kindCount < SB.Missions.CONTRACT_TYPES.length) {
+          issues.push('contract generator produced only ' + kindCount + ' of ' +
+            SB.Missions.CONTRACT_TYPES.length + ' job types in ' + madeCount + ' draws');
+        }
+        this.progress.xp = savedXp;
+        this.progress.unlocked = savedUnlocked;
+        this.progress.rank = this.progress.rankInfo().rank;
+      }
+
+      // ---- garage: store, upgrade, retrieve ---------------------------------
+      // The retrieval bug this catches is specific and easy to reintroduce:
+      // Vehicle.placeAt resolves its height from 50 m up, which under a
+      // three-deck car park finds the ROOF, so a car fetched from the garage
+      // materialised three floors above its bay.
+      if (this.garage && this.garage.bay && this.traffic && this.progress) {
+        var ga = this.garage;
+        var keptXp = this.progress.xp, keptUnlocked = this.progress.unlocked;
+        this.progress.xp = 999999;
+        this.progress.rank = this.progress.rankInfo().rank;
+        this.progress.unlocked = {};
+        this.progress.refreshUnlocks();
+        var keptSlots = ga.slots.slice(0);
+        ga.slots.length = 0;
+
+        var probeCar = this.traffic.spawnParked('sedan', ga.bay.x, ga.bay.z, 0, 0x1d3f77);
+        var baseTorque = SB.VehicleSpecs.sedan.torque;
+        if (!ga.store(probeCar)) {
+          issues.push('garage refused to store a car into an empty garage');
+        } else {
+          ga.recycleBody(probeCar);
+          ga.slots[0].upgrades.engine = 1;
+          var back = ga.retrieve(0);
+          if (!back) {
+            issues.push('garage could not retrieve a stored car');
+          } else {
+            if (Math.abs(back.pos.y - ga.bay.y) > 1.5) {
+              issues.push('garage returned a car at y=' + back.pos.y.toFixed(2) +
+                ' but the bay floor is y=' + ga.bay.y.toFixed(2));
+            }
+            if (!(back.spec.torque > baseTorque)) {
+              issues.push('garage upgrade did not reach the vehicle spec');
+            }
+            if (SB.VehicleSpecs.sedan.torque !== baseTorque) {
+              issues.push('garage upgrade leaked into the shared vehicle spec');
+            }
+            ga.recycleBody(back);
+          }
+        }
+        ga.slots.length = 0;
+        for (var gs = 0; gs < keptSlots.length; gs++) ga.slots.push(keptSlots[gs]);
+        this.progress.xp = keptXp;
+        this.progress.unlocked = keptUnlocked;
+        this.progress.rank = this.progress.rankInfo().rank;
+      }
+
+      // ---- damage: dents must be private to the car that took them ---------
+      if (this.traffic) {
+        var dmgA = this.traffic.spawnParked('sedan', 0, 0, 0, 0x8f1f24);
+        var dmgB = this.traffic.spawnParked('sedan', 6, 0, 0, 0x1d3f77);
+        if (dmgA.body.geometry !== dmgB.body.geometry) {
+          issues.push('undamaged cars of one class do not share their geometry');
+        }
+        dmgA.damage(260, 'world', 1, 0, dmgA.pos.x + 1.6, dmgA.pos.y + 0.4, dmgA.pos.z);
+        if (dmgA.body.geometry === dmgB.body.geometry) {
+          issues.push('a damaged car dented the geometry shared by its whole class');
+        }
+        if (!dmgA._dents) issues.push('a hard impact left no dent');
+        var pristineA = dmgA._pristine, liveA = dmgA.body.geometry.attributes.position.array;
+        var bent = 0;
+        for (var vi = 0; vi < liveA.length; vi++) {
+          if (Math.abs(liveA[vi] - pristineA[vi]) > 1e-5) bent++;
+        }
+        if (!bent) issues.push('dent moved no vertices');
+        dmgA.repairBody();
+        var stillBent = 0;
+        var afterA = dmgA.body.geometry.attributes.position.array;
+        for (vi = 0; vi < afterA.length; vi++) {
+          if (Math.abs(afterA[vi] - pristineA[vi]) > 1e-5) stillBent++;
+        }
+        if (stillBent) issues.push('repairBody left ' + stillBent + ' vertices bent');
+        this.traffic.recycle(dmgA);
+        if (dmgA.body.geometry !== dmgA._sharedGeo) {
+          issues.push('a recycled car kept its private damaged geometry');
+        }
+        this.traffic.recycle(dmgB);
+      }
+
+      // ---- rhythm: the city has to actually change across the day ----------
+      if (this.rhythm && this.traffic && this.peds) {
+        var keptHour = this.sky.hour;
+        var quiet = null, rush = null;
+        this.sky.setHour(3); this.rhythm.apply(true);
+        quiet = { t: this.rhythm.traffic, p: this.rhythm.peds, parked: this.traffic.maxParked };
+        this.sky.setHour(8); this.rhythm.apply(true);
+        rush = { t: this.rhythm.traffic, p: this.rhythm.peds, parked: this.traffic.maxParked };
+        if (!(rush.t > quiet.t * 2)) issues.push('rhythm: rush hour is not busier than 3 a.m.');
+        if (!(rush.p > quiet.p * 2)) issues.push('rhythm: no pedestrian difference across the day');
+        // Parked cars run the other way round: full overnight, emptier by day.
+        if (!(quiet.parked > rush.parked)) issues.push('rhythm: parked population does not invert');
+        // The bias must reach the picker and actually change the mix.
+        this.sky.setHour(2); this.rhythm.apply(true);
+        var nightBias = this.traffic.typeBias;
+        this.sky.setHour(12); this.rhythm.apply(true);
+        var dayBias = this.traffic.typeBias;
+        if (!nightBias || !(nightBias.taxi > 1)) issues.push('rhythm: no night taxi bias');
+        if (nightBias === dayBias) issues.push('rhythm: the traffic mix never changes');
+        this.sky.setHour(keptHour); this.rhythm.apply(true);
+      }
+
+      // ---- camera modes ----------------------------------------------------
+      if (this.cameras && this.player) {
+        var cams = this.cameras;
+        var startMode = cams.mode;
+        cams.setMode('first');
+        cams.render(1 / 60, this.camera);
+        if (this.player.mode === 'foot' && this.player.char.root.visible) {
+          issues.push('first person still draws the player avatar');
+        }
+        var eye = new THREE.Vector3();
+        cams.eyePoint(eye);
+        if (Math.abs(eye.y - (this.player.pos.y + 1.62)) > 0.01) {
+          issues.push('first person eye height is wrong on foot');
+        }
+        cams.setMode('follow');
+        cams.render(1 / 60, this.camera);
+        if (this.player.mode === 'foot' && !this.player.char.root.visible) {
+          issues.push('returning to third person left the avatar hidden');
+        }
+        // Photo mode must restore everything it takes over.
+        var pausedBefore = this.paused, blockBefore = this.uiBlocking;
+        cams.togglePhoto();
+        if (!this.paused) issues.push('photo mode did not stop the world');
+        cams.togglePhoto();
+        if (this.paused !== pausedBefore || this.uiBlocking !== blockBefore) {
+          issues.push('leaving photo mode did not restore the paused/ui state');
+        }
+        cams.setMode(startMode);
+      }
+
+      // ---- save: capture and re-apply must be lossless ---------------------
+      if (SB.Save && this.player) {
+        var snap = SB.Save.capture(this);
+        if (!snap) {
+          issues.push('save capture returned nothing');
+        } else {
+          var moneyWas = this.player.money;
+          this.player.money = 1;
+          if (this.progress) { var xpWas = this.progress.xp; this.progress.xp = 0; }
+          SB.Save.apply(this, JSON.parse(JSON.stringify(snap)));
+          if (this.player.money !== moneyWas) {
+            issues.push('save round trip lost money (' + moneyWas + ' -> ' + this.player.money + ')');
+          }
+          if (this.progress && this.progress.xp !== xpWas) {
+            issues.push('save round trip lost progress (' + xpWas + ' -> ' + this.progress.xp + ')');
+          }
+        }
+      }
     } catch (err) {
       issues.push('threw: ' + (err && err.stack ? err.stack : err));
     }
@@ -675,7 +912,8 @@
         this.city.buildings.length + ' buildings, ' + this.interiors.doors.length +
         ' building doors, ' + this.interiors.rooms.length + ' unique furnished interiors, ' +
         generatedRooms + ' generated variants, ' + hotspotTotal + ' interior hotspots, ' +
-        'multi-level/bank/vehicle/car-stability/boat/plane/heli probes clean)');
+        'multi-level/bank/vehicle/car-stability/boat/plane/heli/routing/contract/' +
+        'garage/damage/rhythm/camera/save probes clean)');
     }
     this.selfTestIssues = issues;
   };

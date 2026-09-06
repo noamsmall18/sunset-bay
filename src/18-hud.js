@@ -31,6 +31,7 @@
     this.ctx = this.canvas.getContext('2d');
     this.dpr = Math.min(window.devicePixelRatio || 1, 2);
     this.mapOpen = false;
+    this.statsOpen = false;
     this.mapZoom = 1;
     this.destination = null;
     this.navigation = { points: [], waypoint: 1, total: 0, remaining: 0, turn: 'NO ROUTE' };
@@ -43,6 +44,9 @@
     this.shopIndex = 0;
     this.flash = 0;
     this.hurtFlash = 0;
+    this.hitMark = 0;
+    this.hitKind = 'hit';
+    this.damageMarks = [];
     this.resize();
 
     var self = this;
@@ -55,10 +59,29 @@
     bus.on('missionComplete', function (m) { self.setTitle('Mission passed', m.name); });
     bus.on('missionFailed', function (m) { self.setTitle('Mission failed', m.name); });
     bus.on('wantedUp', function (n) { self.flash = 1; });
-    bus.on('playerHurt', function (e) { self.hurtFlash = Math.min(1, self.hurtFlash + e.amount * 0.02); });
+    bus.on('playerHurt', function (e) {
+      self.hurtFlash = Math.min(1, self.hurtFlash + e.amount * 0.02);
+      if (e.angle !== null && e.angle !== undefined) {
+        // Merge into a mark already pointing the same way rather than
+        // stacking six overlapping wedges during a burst.
+        for (var i = 0; i < self.damageMarks.length; i++) {
+          if (Math.abs(M.angleDelta(self.damageMarks[i].angle, e.angle)) < 0.35) {
+            self.damageMarks[i].life = 1.6;
+            self.damageMarks[i].weight = Math.min(1, self.damageMarks[i].weight + e.amount * 0.02);
+            return;
+          }
+        }
+        self.damageMarks.push({ angle: e.angle, life: 1.6, weight: M.clamp(e.amount * 0.03, 0.25, 1) });
+        if (self.damageMarks.length > 6) self.damageMarks.shift();
+      }
+    });
+    bus.on('shotHit', function (e) {
+      self.hitMark = 1;
+      self.hitKind = e.killed ? 'kill' : (e.headshot ? 'head' : 'hit');
+    });
     bus.on('busted', function (e) { self.setTitle('Busted', 'Fine ' + SB.formatMoney(e.fine)); });
     bus.on('playerDied', function () { self.setTitle('Wasted', ''); });
-    bus.on('toast', function (t) { self.toast(t.text); });
+    bus.on('toast', function (t) { self.toast(t.text, t.accent); });
     bus.on('weaponPickup', function (w) { self.toast('Acquired: ' + w.name); });
     bus.on('openService', function (room) { self.openShop(room); });
     bus.on('interiorEntered', function (room) { self.toast(room.name); });
@@ -69,11 +92,54 @@
         self.setMapOpen(!self.mapOpen);
         e.preventDefault();
       }
+      if ((e.code === 'KeyP' || e.code === 'Tab') && !self.shop) {
+        self.setStatsOpen(!self.statsOpen);
+        e.preventDefault();
+      }
+      if (e.code === 'Escape' && self.statsOpen) {
+        self.setStatsOpen(false);
+        e.preventDefault();
+      }
       if (self.shop) self.shopKey(e);
     });
-    this.canvas.addEventListener('click', function (e) {
-      if (self.mapOpen) self.mapTap(e.clientX, e.clientY);
+    // Map interaction: click to route, drag to pan, wheel to zoom. The drag
+    // has to suppress the click that follows it, or every pan drops a
+    // waypoint where the mouse happened to stop.
+    var drag = null;
+    this.canvas.addEventListener('pointerdown', function (e) {
+      if (!self.mapOpen) return;
+      drag = { x: e.clientX, y: e.clientY, moved: 0,
+        panX: self.mapPan ? self.mapPan.x : 0, panZ: self.mapPan ? self.mapPan.z : 0 };
+      self.canvas.setPointerCapture && self.canvas.setPointerCapture(e.pointerId);
     });
+    this.canvas.addEventListener('pointermove', function (e) {
+      if (!drag || !self.mapOpen || !self.bigMapFrame) return;
+      var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      drag.moved = Math.max(drag.moved, Math.hypot(dx, dy));
+      self.mapPan.x = drag.panX - dx / self.bigMapFrame.s;
+      self.mapPan.z = drag.panZ - dy / self.bigMapFrame.s;
+    });
+    this.canvas.addEventListener('pointerup', function (e) { window.setTimeout(function () { drag = null; }, 0); });
+    this.canvas.addEventListener('pointercancel', function () { drag = null; });
+    this.canvas.addEventListener('click', function (e) {
+      if (!self.mapOpen) return;
+      if (drag && drag.moved > 5) return;
+      self.mapTap(e.clientX, e.clientY);
+    });
+    this.canvas.addEventListener('wheel', function (e) {
+      if (!self.mapOpen || !self.bigMapFrame) return;
+      e.preventDefault();
+      var f = self.bigMapFrame;
+      // Zoom about the cursor: the world point under the pointer stays put.
+      var wx = f.wx0 + (e.clientX - f.offX) / f.s;
+      var wz = f.wz0 + (e.clientY - f.offZ) / f.s;
+      var before = self.mapZoom;
+      self.mapZoom = M.clamp(self.mapZoom * (e.deltaY < 0 ? 1.18 : 1 / 1.18), 1, 7);
+      if (self.mapZoom === before) return;
+      var k = 1 - before / self.mapZoom;
+      self.mapPan.x += (wx - self.mapPan.x) * k;
+      self.mapPan.z += (wz - self.mapPan.z) * k;
+    }, { passive: false });
   }
 
   HUD.prototype.resize = function () {
@@ -97,9 +163,12 @@
     return f(weight, Math.round(size * (this.s || 1)), face);
   };
 
-  HUD.prototype.toast = function (text) {
-    this.toasts.push({ text: text, life: 3.4 });
-    if (this.toasts.length > 4) this.toasts.shift();
+  HUD.prototype.toast = function (text, accent) {
+    // Repeating the same line just refreshes it rather than stacking copies.
+    var last = this.toasts[this.toasts.length - 1];
+    if (last && last.text === text) { last.life = 3.4; last.age = 0.2; return; }
+    this.toasts.push({ text: text, life: 3.4, age: 0, accent: accent || null });
+    if (this.toasts.length > 5) this.toasts.shift();
   };
 
   HUD.prototype.setTitle = function (main, sub) {
@@ -116,6 +185,11 @@
 
     this.flash = Math.max(0, this.flash - dt * 1.6);
     this.hurtFlash = Math.max(0, this.hurtFlash - dt * 1.9);
+    this.hitMark = Math.max(0, this.hitMark - dt * 2.3);
+    for (var dm = this.damageMarks.length - 1; dm >= 0; dm--) {
+      this.damageMarks[dm].life -= dt;
+      if (this.damageMarks[dm].life <= 0) this.damageMarks.splice(dm, 1);
+    }
     this.titleT = Math.max(0, this.titleT - dt);
 
     if (!g.started) return;
@@ -131,6 +205,11 @@
       ctx.fillRect(0, 0, this.w, this.h);
     }
 
+    // The progress page is a full-screen read, not an overlay: leaving the
+    // radar and the speedometer showing through it just makes both harder to
+    // read.
+    if (this.statsOpen) { this.drawStats(); this.drawFade(); return; }
+
     this.drawRadar(dt);
     this.drawVitals();
     this.drawWeather();
@@ -140,6 +219,8 @@
     this.drawPerformance();
     if (inCraft(g.player)) this.drawSpeedo();
     this.drawCrosshair();
+    this.drawHitMark();
+    this.drawDamageMarks();
     this.drawToasts(dt);
     this.drawTitle();
     if (this.mapOpen) this.drawBigMap();
@@ -148,9 +229,19 @@
   };
 
   HUD.prototype.setMapOpen = function (open) {
+    // Opening the map re-centres on the player. Keeping a stale pan from a
+    // previous look means the map opens somewhere you are not.
+    if (open && !this.mapOpen) {
+      this.mapZoom = 1;
+      var pl = this.game.player;
+      if (pl) this.mapPan = { x: pl.pos.x, z: pl.pos.z };
+      else this.mapPan = null;
+    }
     this.mapOpen = !!open;
-    this.game.uiBlocking = this.mapOpen || !!this.shop;
-    this.canvas.style.pointerEvents = this.mapOpen ? 'auto' : 'none';
+    this.game.uiBlocking = this.mapOpen || this.statsOpen || !!this.shop;
+    // Either full-screen page wants the pointer; closing one while the other
+    // is still up must not take it back.
+    this.canvas.style.pointerEvents = (this.mapOpen || this.statsOpen) ? 'auto' : 'none';
   };
 
   function colorHex(value) {
@@ -180,6 +271,14 @@
     var g = this.game, places = [], L = g.layout;
     var mission = this.missionPlace();
     if (mission) places.push(mission);
+    // A contract you can see on the radar but not route to is a contract you
+    // will not take. Put it on the map as its own kind of place.
+    var ms = g.missions;
+    if (ms && !ms.active && ms.contract) {
+      places.push({ id: 'contract', name: ms.contract.name,
+        x: ms.contract.giver.x, z: ms.contract.giver.z,
+        color: 0x66e07a, icon: '●', kind: 'contract', priority: 1 });
+    }
     if (g.transport) {
       for (var i = 0; i < g.transport.landmarks.length; i++) {
         var lm = g.transport.landmarks[i];
@@ -189,7 +288,10 @@
       }
     }
     var authored = [
-      { id: 'garage', name: 'Car park', block: L.landmarks && L.landmarks.garage, color: 0xf2c14e, icon: 'P' },
+      // Once the garage is unlocked the car park is not just a structure to
+      // drive up any more, it is where your cars live. Say so on the map.
+      { id: 'garage', name: (g.garage && g.garage.available()) ? 'Your garage' : 'Car park',
+        block: L.landmarks && L.landmarks.garage, color: 0xf2c14e, icon: 'P' },
       { id: 'stadium', name: 'Stadium', block: L.landmarks && L.landmarks.stadium, color: 0xff7a66, icon: '◆' },
       { id: 'park', name: 'Central park', block: L.landmarks && L.landmarks.park, color: 0x66e07a, icon: '✚' }
     ];
@@ -232,13 +334,15 @@
     var finish = Roads.nearestNode(L, target.x, target.z);
     var points = [{ x: p.pos.x, z: p.pos.z }];
     if (M.dist(p.pos.x, p.pos.z, start.x, start.z) > 4) points.push({ x: start.x, z: start.z });
-    var nodeId = start.id, guard = 0;
-    while (nodeId !== finish.id && guard++ < L.nodes.length + 2) {
-      var next = Roads.routeStep(L, nodeId, finish.id);
-      if (next === nodeId) break;
-      var n = L.nodes[next];
-      points.push({ x: n.x, z: n.z });
-      nodeId = next;
+    // One routing field serves the whole path. The old loop ran a fresh
+    // graph search for every single waypoint, which on a cross-city route
+    // meant hundreds of full searches in one frame.
+    var path = Roads.findPath(L, start.id, finish.id);
+    if (path) {
+      for (var pi = 1; pi < path.length; pi++) {
+        var n = L.nodes[path[pi]];
+        points.push({ x: n.x, z: n.z });
+      }
     }
     if (M.dist(points[points.length - 1].x, points[points.length - 1].z, target.x, target.z) > 1) {
       points.push({ x: target.x, z: target.z });
@@ -249,7 +353,29 @@
     this.navigation.waypoint = Math.min(1, Math.max(0, points.length - 1));
     this.navigation.total = total;
     this.navigation.remaining = total;
+    this.navigation.startNode = start.id;
+    this.navigation.replan = 0;
     this.navigation.key = target.id + ':' + target.x.toFixed(1) + ':' + target.z.toFixed(1);
+  };
+
+  // How far the player is from the route they were given. Used to decide
+  // whether a wrong turn should be re-planned rather than pointing the driver
+  // back at a waypoint they have already driven past.
+  HUD.prototype.routeDeviation = function () {
+    var pts = this.navigation.points, p = this.game.player;
+    if (!pts || pts.length < 2) return 0;
+    var best = 1e9;
+    var from = Math.max(0, this.navigation.waypoint - 1);
+    var to = Math.min(pts.length - 1, this.navigation.waypoint + 1);
+    for (var i = from; i < to; i++) {
+      var a = pts[i], b = pts[i + 1];
+      var dx = b.x - a.x, dz = b.z - a.z;
+      var len2 = dx * dx + dz * dz;
+      var t = len2 < 1e-6 ? 0 : M.clamp(((p.pos.x - a.x) * dx + (p.pos.z - a.z) * dz) / len2, 0, 1);
+      var d = M.dist2(a.x + dx * t, a.z + dz * t, p.pos.x, p.pos.z);
+      if (d < best) best = d;
+    }
+    return Math.sqrt(best);
   };
 
   HUD.prototype.updateNavigation = function (dt) {
@@ -266,7 +392,17 @@
     // The route geometry is stable while the player follows it. Rebuilding a
     // full graph path every few frames makes the HUD compete with the game
     // renderer; refresh only when the destination or route is actually new.
-    if (key !== this.navigation.key || !this.navigation.points.length) {
+    var nav0 = this.navigation;
+    nav0.replan = (nav0.replan || 0) - dt;
+    var strayed = false;
+    if (nav0.points.length > 1 && nav0.replan <= 0) {
+      nav0.replan = 1.0;
+      // A driver who misses a turn should be re-routed from where they are,
+      // not steered back to a waypoint behind them. 45 m is wide enough to
+      // survive a lane change or a kerb hop on a two-lane avenue.
+      strayed = this.routeDeviation() > 45;
+    }
+    if (key !== nav0.key || !nav0.points.length || strayed) {
       this.rebuildRoute();
     }
     var nav = this.navigation, pts = nav.points;
@@ -307,7 +443,7 @@
     if (!g.weather) return;
     var w = g.weather;
     var x = this.w - 24 * this.s - this.sa.right;
-    var y = 76 * this.s + this.utilH + this.sa.top;
+    var y = Math.max(76 * this.s + this.utilH + this.sa.top, (this.vitalsBottom || 0) + 22 * this.s);
     var accent = w.mode === 'rain' ? '#8ed8f2' : (w.mode === 'snow' ? '#f4f8ff' : GOLD);
     ctx.textAlign = 'right';
     ctx.font = this.font(700, 14);
@@ -319,6 +455,7 @@
       w.mode === 'snow' ? 'GRIP ' + w.grip() + '%  ·  DRIFTS' :
         w.mode === 'night' ? 'CITY LIGHTS  ·  T' : 'CLEAR  ·  T';
     ctx.fillText(effect, x, y + 15 * this.s);
+    this.rightRailBottom = y + 15 * this.s;
   };
 
   // ---------------------------------------------------------------- radar --
@@ -421,7 +558,7 @@
     if (g.missions) {
       for (var i = 0; i < g.missions.blips.length; i++) {
         var bl = g.missions.blips[i];
-        if (bl.kind !== 'mission' && bl.kind !== 'objective' && bl.kind !== 'side') continue;
+        if (bl.kind !== 'mission' && bl.kind !== 'objective' && bl.kind !== 'contract') continue;
         this.blip(ctx, tx, a, bl.x, bl.z, bl.color, bl.small ? 3 : 5, cx, cy, R);
       }
     }
@@ -585,6 +722,21 @@
       y += 16;
     }
 
+    // rank: money says what you have, rank says what you have done. It sits
+    // directly under the money because they are read together.
+    var prog = g.progress;
+    if (prog) {
+      y += 19;
+      var info = prog.rankInfo(), rp = prog.rankProgress();
+      ctx.font = this.font(700, 12);
+      ctx.fillStyle = GOLD;
+      ctx.fillText('RANK ' + info.rank + '  ' + info.name.toUpperCase(), x, y);
+      y += 7;
+      var rw = 176 * this.s;
+      this.bar(ctx, x - rw, y, rw, 3 * this.s, rp.frac, 'rgba(242,193,78,0.9)', 'rgba(0,0,0,0.4)');
+      y += 4;
+    }
+
     // health / armour bars
     y += 18;
     var bw = 176 * this.s, bh = 9 * this.s;
@@ -604,7 +756,24 @@
     ctx.font = this.font(600, 15);
     ctx.fillStyle = DIM;
     var hr = Math.floor(g.sky.hour), mi = Math.floor((g.sky.hour % 1) * 60);
-    ctx.fillText((hr < 10 ? '0' : '') + hr + ':' + (mi < 10 ? '0' : '') + mi, x, y);
+    var clockText = (hr < 10 ? '0' : '') + hr + ':' + (mi < 10 ? '0' : '') + mi;
+    // What the city is doing at this hour. Without it the daily rhythm is a
+    // thing the player feels but cannot name.
+    if (g.rhythm) {
+      var rw = ctx.measureText(clockText).width;
+      ctx.font = this.font(700, 10);
+      ctx.fillStyle = g.rhythm.period === 'rush' ? '#ffae6e'
+        : (g.rhythm.period === 'night' ? '#8ea6d8' : DIM);
+      ctx.fillText(g.rhythm.label(), x - rw - 9 * this.s, y);
+      ctx.font = this.font(600, 15);
+      ctx.fillStyle = DIM;
+    }
+    ctx.fillText(clockText, x, y);
+
+    // The vitals column grows: stars appear, armour and stamina bars come and
+    // go. Everything below it in the right-hand rail has to start from where
+    // this actually ended, or the clock and the weather line share a row.
+    this.vitalsBottom = y;
   };
 
   HUD.prototype.bar = function (ctx, x, y, w, h, frac, fill, back) {
@@ -737,6 +906,8 @@
       text = g.rooftops.prompt; key = 'E';
     } else if (p.boatInteriorPrompt) {
       text = p.boatInteriorPrompt.text; key = p.boatInteriorPrompt.key;
+    } else if (g.garage && g.garage.prompt) {
+      text = g.garage.prompt; key = 'E';
     } else if (p.mode === 'foot' && p.nearVehicle) {
       text = 'Enter ' + p.nearVehicle.name; key = 'F';
     } else if (inCraft(p)) {
@@ -861,24 +1032,97 @@
     ctx.fillRect(cx - 1, cy - 1, 2, 2);
   };
 
+  // Four ticks that snap outward from the crosshair on a connect: white for a
+  // body hit, gold for a headshot, red for a kill. This is the only signal
+  // that separates "I hit them" from "I missed" at range.
+  HUD.prototype.drawHitMark = function () {
+    if (this.hitMark <= 0.001) return;
+    var ctx = this.ctx, cx = this.w / 2, cy = this.h / 2;
+    var t = this.hitMark;
+    var kind = this.hitKind;
+    var color = kind === 'kill' ? 'rgba(224,85,63,' : (kind === 'head' ? 'rgba(255,206,84,' : 'rgba(255,255,255,');
+    var inner = 5 + (1 - t) * 7;
+    var len = kind === 'kill' ? 12 : 8;
+    ctx.save();
+    ctx.lineCap = 'round';
+    // Drawn twice: a dark stroke underneath so the marker stays visible
+    // against a white wall or a bright sky, then the coloured stroke on top.
+    for (var pass = 0; pass < 2; pass++) {
+      ctx.strokeStyle = pass === 0
+        ? 'rgba(0,0,0,' + (t * 0.55).toFixed(3) + ')'
+        : color + (t * 0.98).toFixed(3) + ')';
+      ctx.lineWidth = (kind === 'hit' ? 2.6 : 3.4) + (pass === 0 ? 2.4 : 0);
+      for (var i = 0; i < 4; i++) {
+        var a = Math.PI / 4 + i * Math.PI / 2;
+        var ca = Math.cos(a), sa = Math.sin(a);
+        ctx.beginPath();
+        ctx.moveTo(cx + ca * inner, cy + sa * inner);
+        ctx.lineTo(cx + ca * (inner + len), cy + sa * (inner + len));
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  };
+
+  // Where the shot came from, as an arc at that bearing relative to the way
+  // you are facing. Being shot with no idea from where is the single most
+  // frustrating thing an on-foot fight can do to you.
+  HUD.prototype.drawDamageMarks = function () {
+    if (!this.damageMarks.length) return;
+    var g = this.game, p = g.player;
+    if (!p) return;
+    var ctx = this.ctx, cx = this.w / 2, cy = this.h / 2;
+    // camYaw is where the camera looks, which is what the player is reading
+    // the screen against - the body yaw lags it while turning.
+    var facing = p.camYaw !== undefined ? p.camYaw : (inCraft(p) ? p.vehicle.yaw : p.yaw);
+    var R = Math.min(this.w, this.h) * 0.20;
+    ctx.save();
+    for (var i = 0; i < this.damageMarks.length; i++) {
+      var d = this.damageMarks[i];
+      var rel = M.angleDelta(facing, d.angle);
+      var a = M.clamp(d.life / 1.6, 0, 1) * d.weight;
+      // Screen bearing: straight ahead is up.
+      var screenA = rel - Math.PI / 2;
+      ctx.strokeStyle = 'rgba(232,66,50,' + (a * 0.95).toFixed(3) + ')';
+      ctx.lineWidth = 7 + d.weight * 7;
+      ctx.lineCap = 'butt';
+      ctx.beginPath();
+      ctx.arc(cx, cy, R, screenA - 0.30, screenA + 0.30);
+      ctx.stroke();
+    }
+    ctx.restore();
+  };
+
   // -------------------------------------------------------------- toasts ---
   HUD.prototype.drawToasts = function (dt) {
     var ctx = this.ctx;
-    var y = this.h * 0.30;
-    ctx.textAlign = 'center';
-    for (var i = this.toasts.length - 1; i >= 0; i--) {
+    if (!this.toasts.length) return;
+    // Notifications used to stack up the middle of the screen, straight over
+    // the road you were driving down. They belong in the right-hand rail
+    // under the vitals, where nothing else competes for the space.
+    var right = this.w - 24 * this.s - this.sa.right;
+    var y = (this.rightRailBottom || (110 * this.s + this.sa.top)) + 30 * this.s;
+    ctx.textAlign = 'right';
+    for (var i = 0; i < this.toasts.length; i++) {
       var t = this.toasts[i];
       t.life -= dt;
-      if (t.life <= 0) { this.toasts.splice(i, 1); continue; }
-      ctx.globalAlpha = M.clamp(t.life, 0, 1);
-      ctx.font = this.font(600, 18);
-      ctx.fillStyle = 'rgba(8,10,14,0.75)';
-      var w = ctx.measureText(t.text).width + 30;
-      this.roundRect(ctx, this.w / 2 - w / 2, y - 17, w, 28, 4);
+      t.age = (t.age || 0) + dt;
+      if (t.life <= 0) { this.toasts.splice(i, 1); i--; continue; }
+      // Slide in from the right edge and fade out over the last half second.
+      var slide = (1 - M.smoothstep(M.clamp(t.age / 0.22, 0, 1))) * 40 * this.s;
+      ctx.globalAlpha = M.clamp(t.life / 0.5, 0, 1) * M.clamp(t.age / 0.14, 0, 1);
+      ctx.font = this.font(600, 13);
+      var tw = ctx.measureText(t.text).width;
+      var bw = tw + 22 * this.s, bh = 25 * this.s;
+      var bx = right - bw + slide;
+      ctx.fillStyle = 'rgba(8,11,16,0.80)';
+      this.roundRect(ctx, bx, y - bh + 6 * this.s, bw, bh, 4 * this.s);
       ctx.fill();
+      ctx.fillStyle = t.accent || GOLD;
+      ctx.fillRect(bx, y - bh + 6 * this.s, 2.5 * this.s, bh);
       ctx.fillStyle = INK;
-      ctx.fillText(t.text, this.w / 2, y + 3);
-      y -= 34;
+      ctx.fillText(t.text, right - 11 * this.s + slide, y);
+      y += bh + 6 * this.s;
       ctx.globalAlpha = 1;
     }
   };
@@ -925,21 +1169,40 @@
     ctx.fillStyle = 'rgba(5,8,13,0.96)';
     ctx.fillRect(0, 0, this.w, this.h);
 
-    var pad = Math.max(42, 58 * this.s);
+    var chromeTop = Math.max(54, 62 * this.s);
+    var pad = Math.max(14, 18 * this.s);
     var mapBounds = L.playBounds || {
       minX: L.bounds.minX - 220, maxX: L.bounds.maxX + 60,
       minZ: L.bounds.minZ - 60, maxZ: L.bounds.maxZ + 60
     };
     var wx0 = mapBounds.minX, wx1 = mapBounds.maxX;
     var wz0 = mapBounds.minZ, wz1 = mapBounds.maxZ;
+    // Fit the city to the window first. The old fit reserved a fixed 58px
+    // border on every side of a square map inside a 16:9 window, so on a wide
+    // display half the screen was empty and the city was drawn small.
+    var viewTop = chromeTop + pad, viewBot = this.h - 44 * this.s - this.sa.bottom;
     var sx = (this.w - pad * 2) / (wx1 - wx0);
-    var sz = (this.h - pad * 2) / (wz1 - wz0);
-    var s = Math.min(sx, sz);
-    var offX = (this.w - (wx1 - wx0) * s) / 2;
-    var offZ = (this.h - (wz1 - wz0) * s) / 2;
+    var sz = (viewBot - viewTop) / (wz1 - wz0);
+    var fit = Math.min(sx, sz);
+    var s = fit * this.mapZoom;
+    // Pan is stored in world units so it survives a zoom change and a resize.
+    if (!this.mapPan) this.mapPan = { x: (wx0 + wx1) / 2, z: (wz0 + wz1) / 2 };
+    var span = { x: this.w / s, z: (viewBot - viewTop) / s };
+    // Never let the view slide off the city entirely.
+    this.mapPan.x = M.clamp(this.mapPan.x, wx0 - span.x * 0.3, wx1 + span.x * 0.3);
+    this.mapPan.z = M.clamp(this.mapPan.z, wz0 - span.z * 0.3, wz1 + span.z * 0.3);
+    var offX = this.w / 2 - (this.mapPan.x - wx0) * s;
+    var offZ = (viewTop + viewBot) / 2 - (this.mapPan.z - wz0) * s;
     function T(x, z, out) { out[0] = offX + (x - wx0) * s; out[1] = offZ + (z - wz0) * s; }
     var a = [0, 0], b = [0, 0];
-    this.bigMapFrame = { wx0: wx0, wx1: wx1, wz0: wz0, wz1: wz1, s: s, offX: offX, offZ: offZ, places: [] };
+    this.bigMapFrame = { wx0: wx0, wx1: wx1, wz0: wz0, wz1: wz1, s: s, fit: fit,
+      offX: offX, offZ: offZ, places: [], viewTop: viewTop, viewBot: viewBot };
+    // The map fills the window now, so clip it to the area between the header
+    // and the legend rather than letting streets run under the chrome.
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, viewTop - pad, this.w, viewBot - viewTop + pad * 2);
+    ctx.clip();
 
     // Generated texture gives the map a real cartographic surface; geometry
     // below it remains the source of truth for this game's streets.
@@ -1013,12 +1276,19 @@
       }
     }
 
-    this.drawRoute(ctx, T, 0, 0, 0, 4.0, 'rgba(255,210,92,0.96)');
+    // The freeway is drawn orange, so the route cannot also be orange or the
+    // two are indistinguishable. A dark casing under a bright cyan line, with
+    // travel chevrons along it, reads as "this is your line" at a glance.
+    this.drawRoute(ctx, T, 0, 0, 0, 8.0, 'rgba(4,8,12,0.85)');
+    this.drawRoute(ctx, T, 0, 0, 0, 4.0, 'rgba(120,236,255,0.98)');
+    this.drawRouteChevrons(ctx, T);
 
     // Major destinations only. Each marker doubles as a hit target on the
     // open map, so route selection is direct and discoverable.
     var places = this.mapPlaces();
-    ctx.textAlign = 'left';
+    // Draw every diamond first, then lay the labels over the top: a label
+    // must never be able to hide a marker it is not describing.
+    var laid = [];
     for (i = 0; i < places.length; i++) {
       var place = places[i];
       T(place.x, place.z, a);
@@ -1030,11 +1300,14 @@
       ctx.fill(); ctx.stroke();
       if (selected) { ctx.strokeStyle = 'rgba(255,220,100,0.55)'; ctx.beginPath(); ctx.arc(0, 0, 16, 0, M.TAU); ctx.stroke(); }
       ctx.restore();
-      ctx.fillStyle = selected ? '#fff8dc' : 'rgba(244,241,234,0.74)';
-      ctx.font = this.font(selected ? 700 : 600, selected ? 13 : 11);
-      ctx.fillText(place.name.toUpperCase(), a[0] + 13, a[1] + 4);
+      laid.push({ x: a[0], y: a[1], place: place, selected: selected });
       this.bigMapFrame.places.push({ x: a[0], y: a[1], r: 22, place: place });
     }
+    // Selected markers claim their label slot first, then the rest in order,
+    // so the destination you actually care about is never the one dropped.
+    laid.sort(function (m, n) { return (n.selected ? 1 : 0) - (m.selected ? 1 : 0); });
+    var taken = [];
+    for (i = 0; i < laid.length; i++) this.drawMapLabel(ctx, laid[i], taken);
 
     // player
     T(p.pos.x, p.pos.z, a);
@@ -1048,6 +1321,8 @@
     ctx.closePath(); ctx.fill();
     ctx.shadowBlur = 0;
     ctx.restore();
+
+    ctx.restore();  // end map clip
 
     // Map chrome: title, legend, selected destination and the action hint.
     ctx.fillStyle = 'rgba(5,8,13,0.88)';
@@ -1063,8 +1338,242 @@
       ctx.fillStyle = GOLD; ctx.font = this.font(700, 13);
       ctx.fillText(this.navigation.turn + '  ·  ' + Math.round(this.navigation.remaining) + 'M', this.w - 24, 51 * this.s + this.sa.top);
     }
-    ctx.textAlign = 'center'; ctx.fillStyle = DIM; ctx.font = this.font(600, 13);
-    ctx.fillText('ROUTE LINE = YOUR NEXT TURN  ·  COLOURED DIAMONDS = MAIN CITY PLACES', this.w / 2, this.h - 22 - this.sa.bottom);
+    this.drawMapLegend(ctx);
+  };
+
+  // A key, because the map draws four different kinds of line and none of
+  // them are self-explanatory.
+  HUD.prototype.drawMapLegend = function (ctx) {
+    var y = this.h - 22 * this.s - this.sa.bottom;
+    var items = [
+      { color: 'rgba(120,236,255,0.98)', label: 'YOUR ROUTE', dash: false },
+      { color: 'rgba(255,158,64,0.95)', label: 'FREEWAY', dash: false },
+      { color: 'rgba(150,205,232,0.85)', label: 'RAILWAY', dash: true },
+      { color: 'rgba(229,191,105,0.55)', label: 'AVENUE', dash: false }
+    ];
+    ctx.font = this.font(600, 11);
+    var gap = 16 * this.s, lineW = 20 * this.s, total = 0, i;
+    for (i = 0; i < items.length; i++) total += lineW + 6 * this.s + ctx.measureText(items[i].label).width + gap;
+    total -= gap;
+    var x = this.w / 2 - total / 2;
+    ctx.fillStyle = 'rgba(5,9,14,0.72)';
+    this.roundRect(ctx, x - 14 * this.s, y - 15 * this.s, total + 28 * this.s, 24 * this.s, 5 * this.s);
+    ctx.fill();
+    ctx.textAlign = 'left';
+    for (i = 0; i < items.length; i++) {
+      ctx.strokeStyle = items[i].color;
+      ctx.lineWidth = 3;
+      ctx.setLineDash(items[i].dash ? [5, 4] : []);
+      ctx.beginPath(); ctx.moveTo(x, y - 4 * this.s); ctx.lineTo(x + lineW, y - 4 * this.s); ctx.stroke();
+      ctx.setLineDash([]);
+      x += lineW + 6 * this.s;
+      ctx.fillStyle = DIM;
+      ctx.fillText(items[i].label, x, y);
+      x += ctx.measureText(items[i].label).width + gap;
+    }
+    ctx.textAlign = 'right';
+    ctx.fillStyle = 'rgba(160,170,182,0.62)';
+    ctx.fillText('SCROLL = ZOOM  ·  DRAG = PAN  ·  ' + Math.round(this.mapZoom * 10) / 10 + 'x',
+      this.w - 24 * this.s, y);
+  };
+
+  // Label placement. Candidate slots run right, left, below and above the
+  // marker; the first one that clears every label already placed and every
+  // other marker wins. If nothing clears, the label is dropped rather than
+  // stacked on top of a neighbour - an unreadable pile of overlapping text is
+  // worse than a diamond you can still click.
+  var LABEL_SLOTS = [
+    { dx: 13, dy: 4, align: 'left' },
+    { dx: -13, dy: 4, align: 'right' },
+    { dx: 13, dy: -11, align: 'left' },
+    { dx: -13, dy: -11, align: 'right' },
+    { dx: 0, dy: 22, align: 'center' },
+    { dx: 0, dy: -16, align: 'center' }
+  ];
+
+  function rectsOverlap(a, b) {
+    return a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
+  }
+
+  HUD.prototype.drawMapLabel = function (ctx, item, taken) {
+    var text = item.place.name.toUpperCase();
+    ctx.font = this.font(item.selected ? 700 : 600, item.selected ? 13 : 11);
+    var tw = ctx.measureText(text).width;
+    var th = (item.selected ? 13 : 11) * this.s + 4;
+    var frame = this.bigMapFrame;
+    for (var i = 0; i < LABEL_SLOTS.length; i++) {
+      var sl = LABEL_SLOTS[i];
+      var x = item.x + sl.dx * this.s, y = item.y + sl.dy * this.s;
+      var x0 = sl.align === 'left' ? x : (sl.align === 'right' ? x - tw : x - tw / 2);
+      var r = { x0: x0 - 3, x1: x0 + tw + 3, y0: y - th, y1: y + 4 };
+      // Off the visible map area is as bad as overlapping.
+      if (r.x0 < 4 || r.x1 > this.w - 4 || r.y0 < frame.viewTop - 10 || r.y1 > frame.viewBot + 6) continue;
+      var clear = true;
+      for (var k = 0; k < taken.length && clear; k++) if (rectsOverlap(r, taken[k])) clear = false;
+      for (var m = 0; m < frame.places.length && clear; m++) {
+        var pl = frame.places[m];
+        if (pl.x === item.x && pl.y === item.y) continue;
+        if (rectsOverlap(r, { x0: pl.x - 10, x1: pl.x + 10, y0: pl.y - 10, y1: pl.y + 10 })) clear = false;
+      }
+      if (!clear) continue;
+      taken.push(r);
+      // A dark plate behind the text keeps it readable over parkland and the
+      // map photo alike.
+      ctx.fillStyle = 'rgba(5,9,14,0.62)';
+      ctx.fillRect(r.x0, r.y0, r.x1 - r.x0, r.y1 - r.y0);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = item.selected ? '#fff8dc' : 'rgba(244,241,234,0.86)';
+      ctx.fillText(text, x0, y);
+      return true;
+    }
+    return false;
+  };
+
+  // Direction chevrons along the plotted route, so the line reads as a
+  // heading rather than as one more coloured road.
+  HUD.prototype.drawRouteChevrons = function (ctx, T) {
+    var pts = this.navigation.points;
+    if (!pts || pts.length < 2) return;
+    var a = [0, 0], b = [0, 0];
+    var phase = (performance.now() / 900) % 1;
+    ctx.save();
+    ctx.fillStyle = 'rgba(230,252,255,0.92)';
+    for (var i = 0; i < pts.length - 1; i++) {
+      T(pts[i].x, pts[i].z, a); T(pts[i + 1].x, pts[i + 1].z, b);
+      var dx = b[0] - a[0], dy = b[1] - a[1];
+      var len = Math.hypot(dx, dy);
+      if (len < 24) continue;
+      var ux = dx / len, uy = dy / len;
+      for (var t = (phase * 34); t < len - 6; t += 34) {
+        var cx = a[0] + ux * t, cy = a[1] + uy * t;
+        ctx.beginPath();
+        ctx.moveTo(cx + ux * 5, cy + uy * 5);
+        ctx.lineTo(cx - ux * 3 - uy * 3.4, cy - uy * 3 + ux * 3.4);
+        ctx.lineTo(cx - ux * 3 + uy * 3.4, cy - uy * 3 - ux * 3.4);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  };
+
+  HUD.prototype.setStatsOpen = function (open) {
+    this.statsOpen = !!open;
+    this.game.uiBlocking = this.mapOpen || this.statsOpen || !!this.shop;
+    this.canvas.style.pointerEvents = (this.mapOpen || this.statsOpen) ? 'auto' : 'none';
+  };
+
+  function metres(n) {
+    return n >= 1000 ? (n / 1000).toFixed(1) + ' km' : Math.round(n) + ' m';
+  }
+  function clock(sec) {
+    var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+    return h ? h + 'h ' + m + 'm' : m + 'm ' + Math.floor(sec % 60) + 's';
+  }
+
+  // The record of a run. Everything on this page is a number the simulation
+  // was already keeping; the page just stops it being invisible.
+  HUD.prototype.drawStats = function () {
+    var g = this.game, ctx = this.ctx, prog = g.progress;
+    ctx.fillStyle = 'rgba(4,7,11,0.97)';
+    ctx.fillRect(0, 0, this.w, this.h);
+    if (!prog) return;
+    var st = prog.stats, info = prog.rankInfo(), rp = prog.rankProgress();
+    var pad = Math.max(30, 48 * this.s);
+
+    ctx.textAlign = 'left';
+    ctx.fillStyle = GOLD; ctx.font = this.font(700, 12);
+    ctx.fillText('SUNSET BAY / PROGRESS', pad, pad + this.sa.top);
+    ctx.fillStyle = INK; ctx.font = this.font(700, 34, DISPLAY);
+    ctx.fillText('RANK ' + info.rank + '  ·  ' + info.name.toUpperCase(), pad, pad + 40 * this.s + this.sa.top);
+
+    // rank bar
+    var barY = pad + 58 * this.s + this.sa.top;
+    var barW = Math.min(520 * this.s, this.w - pad * 2);
+    this.bar(ctx, pad, barY, barW, 7 * this.s, rp.frac, GOLD, 'rgba(0,0,0,0.45)');
+    ctx.fillStyle = DIM; ctx.font = this.font(600, 11);
+    ctx.fillText(rp.next
+      ? prog.xp + ' RP  ·  ' + rp.need + ' to ' + rp.next.name.toUpperCase()
+      : prog.xp + ' RP  ·  MAXIMUM RANK', pad, barY + 22 * this.s);
+
+    var chain = (SB.Missions && SB.Missions.CHAIN) ? SB.Missions.CHAIN.length : 0;
+    var groups = [
+      ['WORK', [
+        ['Story jobs', st.missions + ' / ' + chain],
+        ['Contracts', st.sideJobs],
+        ['Stunt jumps', st.stunts],
+        ['Bank jobs', st.robberies],
+        ['Money earned', SB.formatMoney(st.earned)]
+      ]],
+      ['HEAT', [
+        ['Chases escaped', st.escapes],
+        ['Busted', st.busted],
+        ['Wasted', st.deaths],
+        ['Police down', st.copsDown],
+        ['Others down', st.enemiesDown]
+      ]],
+      ['TRAVEL', [
+        ['Driven', metres(st.metresDriven)],
+        ['Flown', metres(st.metresFlown)],
+        ['Sailed', metres(st.metresSailed)],
+        ['On foot', metres(st.metresWalked)],
+        ['Top speed', Math.round(st.topSpeed) + ' km/h']
+      ]],
+      ['DISCOVERY', [
+        ['Vehicles driven', st.vehiclesDriven],
+        ['Interiors entered', st.interiors],
+        ['Time in the city', clock(st.playSeconds)],
+        ['Current funds', SB.formatMoney(g.player ? g.player.money : 0)],
+        ['Unlocks', Object.keys(prog.unlocked).length + ' / ' + SB.Progress.UNLOCKS.length]
+      ]]
+    ];
+
+    // Four columns on a desktop, two on anything narrow.
+    var cols = this.w > 900 ? 4 : 2;
+    var colW = (this.w - pad * 2) / cols;
+    var top = barY + 56 * this.s;
+    for (var gi = 0; gi < groups.length; gi++) {
+      var cx = pad + (gi % cols) * colW;
+      var cy = top + Math.floor(gi / cols) * 190 * this.s;
+      ctx.textAlign = 'left';
+      ctx.fillStyle = GOLD; ctx.font = this.font(700, 11);
+      ctx.fillText(groups[gi][0], cx, cy);
+      ctx.strokeStyle = 'rgba(242,193,78,0.28)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(cx, cy + 7); ctx.lineTo(cx + colW - 26 * this.s, cy + 7); ctx.stroke();
+      var rows = groups[gi][1];
+      for (var ri = 0; ri < rows.length; ri++) {
+        var ry = cy + (28 + ri * 26) * this.s;
+        ctx.textAlign = 'left';
+        ctx.fillStyle = DIM; ctx.font = this.font(500, 13);
+        ctx.fillText(rows[ri][0], cx, ry);
+        ctx.textAlign = 'right';
+        ctx.fillStyle = INK; ctx.font = this.font(700, 14);
+        ctx.fillText(String(rows[ri][1]), cx + colW - 26 * this.s, ry);
+      }
+    }
+
+    // unlocks, as a single readable strip along the bottom
+    var uy = this.h - 74 * this.s - this.sa.bottom;
+    ctx.textAlign = 'left'; ctx.fillStyle = GOLD; ctx.font = this.font(700, 11);
+    ctx.fillText('UNLOCKS', pad, uy);
+    var ux = pad;
+    ctx.font = this.font(600, 12);
+    for (var ui = 0; ui < SB.Progress.UNLOCKS.length; ui++) {
+      var u = SB.Progress.UNLOCKS[ui];
+      var got = prog.has(u.id);
+      var label = u.name + (got ? '' : '  (rank ' + u.rank + ')');
+      var wpx = ctx.measureText(label).width + 20 * this.s;
+      if (ux + wpx > this.w - pad) { ux = pad; uy += 26 * this.s; }
+      ctx.fillStyle = got ? 'rgba(111,214,138,0.16)' : 'rgba(255,255,255,0.05)';
+      this.roundRect(ctx, ux, uy + 8 * this.s, wpx - 8 * this.s, 21 * this.s, 3 * this.s);
+      ctx.fill();
+      ctx.fillStyle = got ? '#8fe0a8' : 'rgba(150,160,172,0.7)';
+      ctx.fillText(label, ux + 6 * this.s, uy + 23 * this.s);
+      ux += wpx;
+    }
+
+    ctx.textAlign = 'center'; ctx.fillStyle = DIM; ctx.font = this.font(600, 12);
+    ctx.fillText('P OR TAB TO CLOSE', this.w / 2, this.h - 20 * this.s - this.sa.bottom);
   };
 
   HUD.prototype.mapTap = function (px, py) {
@@ -1132,7 +1641,73 @@
   };
 
   HUD.prototype.openShop = function (room) {
-    this.shop = { room: room, items: SHOP_MENUS[room.service] || [] };
+    var items = SHOP_MENUS[room.service] || [];
+    // Rank gates the heavier hardware. The weapons still exist in the world
+    // and can be picked up; what rank buys is the convenience of walking in
+    // and paying for one.
+    var prog = this.game.progress;
+    if (prog && room.service === 'gunshop') {
+      var gate = { smg: 'smgStock', shotgun: 'shotgunStock', rifle: 'rifleStock' };
+      items = items.filter(function (it) {
+        var need = it.id && gate[it.id];
+        return !need || prog.has(need);
+      });
+      if (!items.length) items = [{ name: 'Nothing in stock for you yet', price: 0, act: 'none' }];
+    }
+    this.shop = { room: room, items: items };
+    this.shopIndex = 0;
+    this.game.uiBlocking = true;
+  };
+
+  // The garage reuses the shop list: same navigation, same drawing, same tap
+  // handling. Only the rows and the actions differ.
+  HUD.prototype.openGarage = function (garage) {
+    var items = [];
+    for (var i = 0; i < garage.slots.length; i++) {
+      var slot = garage.slots[i];
+      items.push({
+        name: slot.name, price: 0, act: 'garageCar', index: i,
+        note: SB.Garage.tierSummary(slot)
+      });
+    }
+    if (!items.length) items = [{ name: 'Nothing stored', price: 0, act: 'none', note: '' }];
+    this.shop = {
+      room: { name: 'Your garage  ·  ' + garage.slots.length + '/' + garage.capacity() },
+      items: items, garage: garage
+    };
+    this.shopIndex = 0;
+    this.game.uiBlocking = true;
+  };
+
+  HUD.prototype.openGarageCar = function (garage, index) {
+    var slot = garage.slots[index];
+    if (!slot) { this.openGarage(garage); return; }
+    var items = [
+      { name: 'Bring it out', price: 0, act: 'garageOut', index: index, note: 'drive away' }
+    ];
+    for (var i = 0; i < SB.Garage.UPGRADE_ORDER.length; i++) {
+      var id = SB.Garage.UPGRADE_ORDER[i];
+      var lad = SB.Garage.UPGRADES[id];
+      var have = slot.upgrades[id] | 0;
+      var next = garage.upgradeCost(slot, id);
+      if (next) {
+        items.push({
+          name: lad.name + ' - ' + next.name, price: next.price,
+          act: 'garageUpgrade', index: index, upgrade: id
+        });
+      } else {
+        items.push({
+          name: lad.name + ' - ' + lad.tiers[have].name, price: 0,
+          act: 'none', note: 'maxed'
+        });
+      }
+    }
+    items.push({ name: 'Respray', price: 260, act: 'garageRespray', index: index });
+    items.push({ name: 'Back', price: 0, act: 'garageBack', note: '' });
+    this.shop = {
+      room: { name: slot.name.toUpperCase() },
+      items: items, garage: garage, carIndex: index
+    };
     this.shopIndex = 0;
     this.game.uiBlocking = true;
   };
@@ -1165,6 +1740,51 @@
   HUD.prototype.buy = function (item) {
     var g = this.game, p = g.player;
     if (!item || item.act === 'none') return;
+    var garage = this.shop && this.shop.garage;
+    // Garage rows navigate as well as purchase, so they are handled before
+    // the affordability check that applies to shop goods.
+    if (garage) {
+      if (item.act === 'garageBack') { this.openGarage(garage); return; }
+      if (item.act === 'garageCar') { this.openGarageCar(garage, item.index); return; }
+      if (item.act === 'garageOut') {
+        var out = garage.retrieve(item.index);
+        this.closeShop();
+        if (!out) this.toast('Could not bring it out');
+        return;
+      }
+      if (p.money < item.price) { this.toast('Not enough money'); return; }
+      var slot = garage.slots[item.index];
+      if (!slot) { this.openGarage(garage); return; }
+      if (item.act === 'garageUpgrade') {
+        var step = garage.upgradeCost(slot, item.upgrade);
+        if (!step) return;
+        slot.upgrades[item.upgrade] = step.tier;
+        p.money -= item.price;
+        if (g.progress) g.progress.stats.spent += item.price;
+        g.bus.emit('shopPurchase', item);
+        if (g.audio) g.audio.blip('cash');
+        this.toast(SB.Garage.UPGRADES[item.upgrade].name + ': ' + step.name, '#8fe0a8');
+        this.openGarageCar(garage, item.index);
+        return;
+      }
+      if (item.act === 'garageRespray') {
+        var paints = SB.PAINTS;
+        var pick = slot.color;
+        // Never "respray" to the colour it already is.
+        for (var tries = 0; tries < 12 && pick === slot.color; tries++) {
+          pick = paints[Math.floor(Math.random() * paints.length)];
+        }
+        slot.color = pick;
+        p.money -= item.price;
+        if (g.progress) g.progress.stats.spent += item.price;
+        g.bus.emit('shopPurchase', item);
+        if (g.audio) g.audio.blip('cash');
+        this.toast('Resprayed', '#8fe0a8');
+        this.openGarageCar(garage, item.index);
+        return;
+      }
+      return;
+    }
     if (p.money < item.price) { this.toast('Not enough money'); return; }
     var done = false;
     if (item.act === 'health') {
@@ -1187,6 +1807,8 @@
     }
     if (done) {
       p.money -= item.price;
+      if (g.progress) g.progress.stats.spent += item.price;
+      g.bus.emit('shopPurchase', item);
       if (g.audio) g.audio.blip('cash');
     }
   };
@@ -1233,9 +1855,17 @@
       ctx.font = this.font(600, 18);
       ctx.fillText(it.name, x + 28 * this.s, ry + 23 * this.s);
       ctx.textAlign = 'right';
-      ctx.fillStyle = it.price > this.game.player.money ? '#e0553f' : '#8fe08f';
-      ctx.font = this.font(600, 17);
-      ctx.fillText(it.price ? SB.formatMoney(it.price) : 'free', x + w - 28 * this.s, ry + 23 * this.s);
+      // `note` replaces the price column for rows that are not purchases -
+      // a tier readout, a colour name, a "back" row.
+      if (it.note !== undefined) {
+        ctx.fillStyle = 'rgba(160,170,182,0.78)';
+        ctx.font = this.font(600, 14);
+        ctx.fillText(it.note, x + w - 28 * this.s, ry + 23 * this.s);
+      } else {
+        ctx.fillStyle = it.price > this.game.player.money ? '#e0553f' : '#8fe08f';
+        ctx.font = this.font(600, 17);
+        ctx.fillText(it.price ? SB.formatMoney(it.price) : 'free', x + w - 28 * this.s, ry + 23 * this.s);
+      }
     }
 
     ctx.textAlign = 'center';

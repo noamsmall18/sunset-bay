@@ -653,7 +653,10 @@
   };
 
   // ------------------------------------------------------------ damage -----
-  Player.prototype.takeDamage = function (amount, source) {
+  // fromX/fromZ are optional and say where the damage came from, so the HUD
+  // can point at it. Callers that have no meaningful origin (fire, a fall)
+  // simply omit them and no indicator is drawn.
+  Player.prototype.takeDamage = function (amount, source, fromX, fromZ) {
     if (this.dead) return;
     if (this.armor > 0) {
       var absorbed = Math.min(this.armor, amount * 0.72);
@@ -662,7 +665,11 @@
     }
     this.health -= amount;
     this.shake = Math.min(1, this.shake + amount * 0.010);
-    this.game.bus.emit('playerHurt', { amount: amount, source: source });
+    this.game.bus.emit('playerHurt', {
+      amount: amount, source: source,
+      angle: (fromX === undefined || fromZ === undefined)
+        ? null : Math.atan2(fromZ - this.pos.z, fromX - this.pos.x)
+    });
     if (this.health <= 0) this.die(source);
   };
 

@@ -99,6 +99,28 @@
   }
   #perfBtn.on { opacity: 1; }
   #perfBtn:hover { border-color: rgba(242,193,78,.7); color: var(--gold); }
+  #continueBtn {
+    display: none; padding: 13px 34px;
+    font-family: var(--ui); font-size: 16px; font-weight: 700;
+    letter-spacing: .24em; text-transform: uppercase; color: #10131a;
+    background: linear-gradient(180deg, #a8e6c0, #57b984);
+    border: 0; border-radius: 3px; cursor: pointer; pointer-events: auto;
+    box-shadow: 0 10px 34px rgba(87,185,132,.30);
+    opacity: 0; transition: opacity .4s;
+  }
+  #continueBtn.on { display: block; opacity: 1; }
+  #continueBtn:hover { filter: brightness(1.08); }
+  /* With a save present "Enter the city" is the new-game path, so it steps
+     back and lets Continue take the primary weight. */
+  .boot-actions.has-save #startBtn {
+    background: rgba(10, 14, 22, .68); color: #d7dde5;
+    border: 1px solid rgba(255,255,255,.18); box-shadow: none;
+  }
+  #saveInfo {
+    margin-top: 14px; min-height: 16px;
+    font-family: var(--ui); font-weight: 500; font-size: 12px;
+    letter-spacing: .16em; text-transform: uppercase; color: #6f7d90;
+  }
 
   /* ---------- overlays ---------- */
   .panel {
@@ -269,6 +291,9 @@
     <div class="row"><span>Switch weapon</span><kbd>1 - 5</kbd> / <kbd>Wheel</kbd></div>
     <div class="row"><span>Horn</span><kbd>H</kbd></div>
     <div class="row"><span>Map</span><kbd>M</kbd></div>
+    <div class="row"><span>Rank &amp; stats</span><kbd>P</kbd></div>
+    <div class="row"><span>First / third person</span><kbd>G</kbd></div>
+    <div class="row"><span>Photo mode</span><kbd>X</kbd></div>
     <div class="row"><span>Reload</span><kbd>R</kbd></div>
     <div class="row"><span>Radio / station</span><kbd>B</kbd> / <kbd>N</kbd></div>
     <div class="row"><span>Plane boost / airbrake</span><kbd>Shift</kbd> / <kbd>Space</kbd></div>
@@ -305,47 +330,53 @@
   <div class="sub">Free roam &middot; West Coast</div>
   <div id="bar"><div id="barFill"></div></div>
   <div id="bootMsg">Starting up</div>
-  <div class="boot-actions"><button id="startBtn">Enter the city</button><button id="perfBtn" type="button">Performance</button></div>
+  <div class="boot-actions"><button id="continueBtn" type="button">Continue</button><button id="startBtn">Enter the city</button><button id="perfBtn" type="button">Performance</button></div>
+  <div id="saveInfo"></div>
 </div>
 
 <pre id="err"></pre>
 
 
-<script src="vendor/three.min.js?v=1788195710595"></script>
-<script src="src/00-core.js?v=1788195710595"></script>
-<script src="src/01-textures.js?v=1788195710595"></script>
-<script src="src/02-layout.js?v=1788195710595"></script>
-<script src="src/03-world.js?v=1788195710595"></script>
-<script src="src/04-geom.js?v=1788195710595"></script>
-<script src="src/04b-terrain.js?v=1788195710595"></script>
-<script src="src/05-city.js?v=1788195710595"></script>
-<script src="src/06-sky.js?v=1788195710595"></script>
-<script src="src/07-vehicle.js?v=1788195710595"></script>
-<script src="src/08-props.js?v=1788195710595"></script>
-<script src="src/09-characters.js?v=1788195710595"></script>
-<script src="src/10-fx.js?v=1788195710595"></script>
-<script src="src/11-traffic.js?v=1788195710595"></script>
-<script src="src/12-player.js?v=1788195710595"></script>
-<script src="src/13-peds.js?v=1788195710595"></script>
-<script src="src/14-combat.js?v=1788195710595"></script>
-<script src="src/15-police.js?v=1788195710595"></script>
-<script src="src/16-interiors.js?v=1788195710595"></script>
-<script src="src/17-missions.js?v=1788195710595"></script>
-<script src="src/18-hud.js?v=1788195710595"></script>
-<script src="src/19-game.js?v=1788195710595"></script>
-<script src="src/20-startup.js?v=1788195710595"></script>
-<script src="src/21-audio.js?v=1788195710595"></script>
-<script src="src/22-post.js?v=1788195710595"></script>
-<script src="src/23-quality.js?v=1788195710595"></script>
-<script src="src/24-touch.js?v=1788195710595"></script>
-<script src="src/25-lights.js?v=1788195710595"></script>
-<script src="src/26-boats.js?v=1788195710595"></script>
-<script src="src/27-aircraft.js?v=1788195710595"></script>
-<script src="src/28-infrastructure.js?v=1788195710595"></script>
-<script src="src/29-weather.js?v=1788195710595"></script>
-<script src="src/30-freeway.js?v=1788195710595"></script>
-<script src="src/31-rail.js?v=1788195710595"></script>
-<script src="src/32-rooftops.js?v=1788195710595"></script>
+<script src="vendor/three.min.js?v=1788700701139"></script>
+<script src="src/00-core.js?v=1788700701139"></script>
+<script src="src/01-textures.js?v=1788700701139"></script>
+<script src="src/02-layout.js?v=1788700701139"></script>
+<script src="src/03-world.js?v=1788700701139"></script>
+<script src="src/04-geom.js?v=1788700701139"></script>
+<script src="src/04b-terrain.js?v=1788700701139"></script>
+<script src="src/05-city.js?v=1788700701139"></script>
+<script src="src/06-sky.js?v=1788700701139"></script>
+<script src="src/07-vehicle.js?v=1788700701139"></script>
+<script src="src/08-props.js?v=1788700701139"></script>
+<script src="src/09-characters.js?v=1788700701139"></script>
+<script src="src/10-fx.js?v=1788700701139"></script>
+<script src="src/11-traffic.js?v=1788700701139"></script>
+<script src="src/12-player.js?v=1788700701139"></script>
+<script src="src/13-peds.js?v=1788700701139"></script>
+<script src="src/14-combat.js?v=1788700701139"></script>
+<script src="src/15-police.js?v=1788700701139"></script>
+<script src="src/16-interiors.js?v=1788700701139"></script>
+<script src="src/17-missions.js?v=1788700701139"></script>
+<script src="src/18-hud.js?v=1788700701139"></script>
+<script src="src/19-game.js?v=1788700701139"></script>
+<script src="src/20-startup.js?v=1788700701139"></script>
+<script src="src/21-audio.js?v=1788700701139"></script>
+<script src="src/22-post.js?v=1788700701139"></script>
+<script src="src/23-quality.js?v=1788700701139"></script>
+<script src="src/24-touch.js?v=1788700701139"></script>
+<script src="src/25-lights.js?v=1788700701139"></script>
+<script src="src/26-boats.js?v=1788700701139"></script>
+<script src="src/27-aircraft.js?v=1788700701139"></script>
+<script src="src/28-infrastructure.js?v=1788700701139"></script>
+<script src="src/29-weather.js?v=1788700701139"></script>
+<script src="src/30-freeway.js?v=1788700701139"></script>
+<script src="src/31-rail.js?v=1788700701139"></script>
+<script src="src/32-rooftops.js?v=1788700701139"></script>
+<script src="src/33-progress.js?v=1788700701139"></script>
+<script src="src/34-save.js?v=1788700701139"></script>
+<script src="src/35-garage.js?v=1788700701139"></script>
+<script src="src/36-rhythm.js?v=1788700701139"></script>
+<script src="src/37-camera.js?v=1788700701139"></script>
 <script>
   (function () {
     window.addEventListener('error', function (e) {

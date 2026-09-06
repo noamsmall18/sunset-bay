@@ -21,11 +21,27 @@
       Number.isFinite(v.spec.len) && Number.isFinite(v.spec.mass);
   }
 
-  function pickType(rng) {
-    var r = rng();
-    var acc = 0;
-    for (var i = 0; i < TRAFFIC_TYPES.length; i++) {
-      acc += TRAFFIC_WEIGHT[i];
+  // `bias` is an optional map of type -> multiplier, used by the daily rhythm
+  // to put cabs on the road at 2 a.m. and delivery trucks on it at 5. The
+  // weights are re-normalised, so a bias changes the mix without changing how
+  // many cars there are.
+  function pickType(rng, bias) {
+    var i, total = 0;
+    if (!bias) {
+      var r0 = rng(), acc0 = 0;
+      for (i = 0; i < TRAFFIC_TYPES.length; i++) {
+        acc0 += TRAFFIC_WEIGHT[i];
+        if (r0 <= acc0) return TRAFFIC_TYPES[i];
+      }
+      return 'sedan';
+    }
+    for (i = 0; i < TRAFFIC_TYPES.length; i++) {
+      total += TRAFFIC_WEIGHT[i] * (bias[TRAFFIC_TYPES[i]] || 1);
+    }
+    if (!(total > 0)) return 'sedan';
+    var r = rng() * total, acc = 0;
+    for (i = 0; i < TRAFFIC_TYPES.length; i++) {
+      acc += TRAFFIC_WEIGHT[i] * (bias[TRAFFIC_TYPES[i]] || 1);
       if (r <= acc) return TRAFFIC_TYPES[i];
     }
     return 'sedan';
@@ -49,7 +65,9 @@
     this.parkTimer = 0;
     this._pt = { x: 0, z: 0 };
     this._dir = { x: 0, z: 0 };
-    this.density = 1;
+    this.density = 1;     // interior gate: 0 while indoors
+    this.rhythm = 1;      // time-of-day multiplier, owned by SB.Rhythm
+    this.typeBias = null;
     this.maxCars = SB.Q.settings.traffic;
     this.maxParked = SB.Q.settings.parked;
   }
@@ -85,6 +103,10 @@
   };
 
   Traffic.prototype.recycle = function (v) {
+    // A pooled car must come back straight. This also returns its private
+    // damaged geometry so the pool does not accumulate one body clone per
+    // car that was ever hit.
+    if (v.releaseDamage) v.releaseDamage();
     v.group.visible = false;
     v.pos.set(0, -500, 0);
     v.ai = null;
@@ -118,7 +140,7 @@
     var spot = Roads.randomLanePoint(this.L, this.rng, px, pz, SPAWN_MIN, SPAWN_MAX, this._pt);
     // never drop a car on top of another one
     if (this.occupied(spot.x, spot.z, 7)) return null;
-    var v = this.acquire(pickType(this.rng));
+    var v = this.acquire(pickType(this.rng, this.typeBias));
     Roads.laneDir(this.L, spot.edge, spot.dir, this._dir);
     v.placeAt(spot.x, spot.z, Math.atan2(this._dir.z, this._dir.x));
     v.dormant = false;
@@ -134,6 +156,23 @@
     v.u = v.ai.cruise * this.rng.range(0.55, 1.0);
     this.active.push(v);
     return v;
+  };
+
+  // Recycle the active car furthest from the player. Used when the daily
+  // rhythm wants fewer cars on the road than are currently on it.
+  Traffic.prototype.trimFurthest = function (px, pz) {
+    var worst = -1, wd = -1;
+    for (var i = 0; i < this.active.length; i++) {
+      var v = this.active[i];
+      if (v.isPlayer || v.mission) continue;
+      var d = M.dist2(v.pos.x, v.pos.z, px, pz);
+      if (d > wd) { wd = d; worst = i; }
+    }
+    // Never pull a car out of view: 90 m is beyond the point where one
+    // vanishing is noticeable, and short of the despawn radius.
+    if (worst < 0 || wd < 90 * 90) return;
+    var gone = this.active.splice(worst, 1)[0];
+    this.recycle(gone);
   };
 
   Traffic.prototype.occupied = function (x, z, r) {
@@ -183,7 +222,16 @@
     this.spawnTimer -= dt;
     if (this.spawnTimer <= 0) {
       this.spawnTimer = 0.30;
-      if (this.active.length < this.maxCars * this.density) this.spawnTrafficCar(px, pz);
+      var want = this.maxCars * this.density * this.rhythm;
+      if (this.active.length < want) {
+        this.spawnTrafficCar(px, pz);
+      } else if (this.active.length > want + 5) {
+        // The population used to only ever shrink by cars driving out of
+        // range, so the streets stayed rush-hour full for minutes after the
+        // rush. Retire the furthest car instead - one per tick, so the
+        // thinning is never something you can watch happen.
+        this.trimFurthest(px, pz);
+      }
     }
     this.parkTimer -= dt;
     if (this.parkTimer <= 0) {
@@ -387,7 +435,7 @@
     }
     if (ai.panic > 0) {
       ai.panic -= dt * 0.6;
-      target *= 0.35;
+      if (!ai.flee) target *= 0.35;
     }
 
     // ---- unstick: nudged onto a kerb or wedged against a wall
@@ -438,9 +486,25 @@
     }
     // prefer going straight; the grid then reads as through-traffic
     var pick = null;
-    var straight = options.filter(function (o) { return o.turn === 'straight'; });
-    if (straight.length && this.rng.chance(0.62)) pick = straight[this.rng.int(0, straight.length - 1)];
-    else pick = options[this.rng.int(0, options.length - 1)];
+    if (ai.flee) {
+      // A runner takes whichever exit opens the most distance on the player.
+      // It is a one-junction lookahead, not a plan, which is exactly what an
+      // evading driver looks like: mostly away, occasionally into a corner.
+      var pl = this.game.player;
+      var best = -1;
+      for (var oi = 0; oi < options.length; oi++) {
+        var on = L.nodes[options[oi].other];
+        var score = pl ? M.dist(on.x, on.z, pl.pos.x, pl.pos.z) : this.rng();
+        score *= 0.75 + this.rng() * 0.5;
+        if (options[oi].turn === 'straight') score *= 1.12;
+        if (score > best) { best = score; pick = options[oi]; }
+      }
+    }
+    if (!pick) {
+      var straight = options.filter(function (o) { return o.turn === 'straight'; });
+      if (straight.length && this.rng.chance(0.62)) pick = straight[this.rng.int(0, straight.length - 1)];
+      else pick = options[this.rng.int(0, options.length - 1)];
+    }
 
     pick.lane = pick.edge.lanes > 1 ? this.rng.int(0, pick.edge.lanes - 1) : 0;
     ai.edge = pick.edge;
@@ -635,6 +699,30 @@
   Traffic.prototype.spawnMissionCar = function (type, x, z, yaw, color) {
     var v = this.spawnParked(type, x, z, yaw, color);
     v.mission = true;
+    return v;
+  };
+
+  // A car that runs. It joins the ordinary traffic AI - same lanes, same
+  // signals, same collision handling - with the evasion flag set and a cruise
+  // speed well above the flow, so chasing one means real traffic weaving
+  // rather than a scripted rail.
+  Traffic.prototype.spawnRunner = function (type, x, z, opts) {
+    opts = opts || {};
+    var spot = Roads.randomLanePoint(this.L, this.rng, x, z, 0, 40, this._pt);
+    var v = this.acquire(type || 'sports');
+    Roads.laneDir(this.L, spot.edge, spot.dir, this._dir);
+    v.placeAt(spot.x, spot.z, Math.atan2(this._dir.z, this._dir.x));
+    v.dormant = false;
+    v.mission = true;
+    if (opts.color !== undefined && v.setColor) v.setColor(opts.color);
+    v.ai = {
+      edge: spot.edge, dir: spot.dir, lane: spot.lane, t: 0.5,
+      cruise: opts.cruise || 24,
+      patience: 2.6, panic: 0, stuck: 0, honk: 0, changeCd: 99,
+      flee: true
+    };
+    v.u = v.ai.cruise * 0.6;
+    this.active.push(v);
     return v;
   };
 

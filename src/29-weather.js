@@ -35,6 +35,9 @@
     this.buildSnow();
     this.buildPlows();
     this.precip = makePrecipitation(this.scene);
+    // Take ownership of precipitation from the sky's fallback particle system
+    // so the two do not draw over each other.
+    if (this.sky) this.sky.precipOwned = true;
     this.clouds = makeStormClouds(this.scene);
     this.stormLight = new THREE.PointLight(0x9fc8ff, 0, 180, 2);
     this.scene.add(this.stormLight);
@@ -301,53 +304,125 @@
     return root;
   }
 
+  // A round, soft sprite for snow. A PointsMaterial with no map draws a hard
+  // square, which is what made the old snow read as grey confetti.
+  function flakeTexture() {
+    var c = document.createElement('canvas');
+    c.width = c.height = 32;
+    var g = c.getContext('2d');
+    var grd = g.createRadialGradient(16, 16, 0, 16, 16, 16);
+    grd.addColorStop(0, 'rgba(255,255,255,1)');
+    grd.addColorStop(0.45, 'rgba(255,255,255,0.85)');
+    grd.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grd;
+    g.fillRect(0, 0, 32, 32);
+    var tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace !== undefined ? THREE.SRGBColorSpace : tex.colorSpace;
+    return tex;
+  }
+
+  // Rain and snow are different shapes, not the same shape in two colours.
+  // Rain is a falling streak - a line segment along its own velocity, which is
+  // what a camera actually captures - and snow is a soft round flake drifting
+  // on the wind. Both are driven from one particle buffer so the cost is a
+  // single update loop either way.
   function makePrecipitation(scene) {
     var q = SB.Q.settings;
     var count = q.tier === 'high' ? 2400 : (q.tier === 'medium' ? 1700 : 950);
-    var geo = new THREE.BufferGeometry();
     var pos = new Float32Array(count * 3);
     var speed = new Float32Array(count);
     var phase = new Float32Array(count);
-    for (var i = 0; i < count; i++) {
+    var i, b;
+    for (i = 0; i < count; i++) {
       pos[i * 3] = (Math.random() - 0.5) * 92;
       pos[i * 3 + 1] = Math.random() * 44;
       pos[i * 3 + 2] = (Math.random() - 0.5) * 92;
       speed[i] = 0.7 + Math.random() * 1.4;
       phase[i] = Math.random() * M.TAU;
     }
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    var mat = new THREE.PointsMaterial({ color: 0xdcecff, size: 0.34,
-      transparent: true, opacity: 0, depthWrite: false, sizeAttenuation: true });
-    var points = new THREE.Points(geo, mat);
-    points.frustumCulled = false;
-    points.renderOrder = 5;
-    scene.add(points);
+
+    // ---- rain: two vertices per drop, head and tail
+    var rainGeo = new THREE.BufferGeometry();
+    var rainPos = new Float32Array(count * 6);
+    rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
+    var rainMat = new THREE.LineBasicMaterial({
+      color: 0xbcd8ef, transparent: true, opacity: 0, depthWrite: false,
+      blending: THREE.AdditiveBlending
+    });
+    var rainLines = new THREE.LineSegments(rainGeo, rainMat);
+    rainLines.frustumCulled = false;
+    rainLines.renderOrder = 5;
+    scene.add(rainLines);
+
+    // ---- snow: round sprites
+    var snowGeo = new THREE.BufferGeometry();
+    snowGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    var snowMat = new THREE.PointsMaterial({
+      color: 0xf6faff, size: 0.42, map: flakeTexture(),
+      transparent: true, opacity: 0, depthWrite: false, sizeAttenuation: true
+    });
+    var snowPoints = new THREE.Points(snowGeo, snowMat);
+    snowPoints.frustumCulled = false;
+    snowPoints.renderOrder = 5;
+    scene.add(snowPoints);
+
     return {
-      points: points,
+      points: snowPoints,
+      rain: rainLines,
       update: function (dt, camera, rain, snow, wind, time) {
         var amount = Math.max(rain, snow);
-        points.visible = amount > 0.018;
-        mat.opacity = M.clamp(amount * 0.46, 0, 0.58);
-        points.position.set(camera.position.x, 0, camera.position.z);
+        var isSnow = snow > rain;
+        var on = amount > 0.018;
+        rainLines.visible = on && !isSnow;
+        snowPoints.visible = on && isSnow;
+        rainLines.position.set(camera.position.x, 0, camera.position.z);
+        snowPoints.position.set(camera.position.x, 0, camera.position.z);
         // Clear weather is the common path. Do not walk an invisible particle
         // buffer every frame when there is no rain or snow to draw.
-        if (!points.visible) return;
-        mat.color.set(snow > rain ? 0xf4f8ff : 0xa9c9df);
-        mat.size = snow > rain ? 0.62 : 0.34;
-        var p = geo.attributes.position.array;
-        for (var i = 0; i < count; i++) {
-          var b = i * 3;
-          var fall = (snow > rain ? 2.0 : 31.0) * speed[i];
-          p[b] += wind.x * dt + Math.sin(time * 0.8 + phase[i]) * (snow > rain ? 0.09 : 0.015);
-          p[b + 1] -= fall * dt;
-          p[b + 2] += wind.z * dt + Math.cos(time * 0.7 + phase[i]) * (snow > rain ? 0.08 : 0.01);
-          if (p[b + 1] < -7) {
-            p[b] = (Math.random() - 0.5) * 92;
-            p[b + 1] = 33 + Math.random() * 12;
-            p[b + 2] = (Math.random() - 0.5) * 92;
+        if (!on) return;
+        rainMat.opacity = M.clamp(amount * 0.62, 0, 0.72);
+        snowMat.opacity = M.clamp(amount * 0.85, 0, 0.95);
+        snowMat.size = 0.34 + amount * 0.20;
+
+        var fallBase = isSnow ? 2.0 : 31.0;
+        var wobbleXY = isSnow ? 0.09 : 0.015;
+        var wobbleZ = isSnow ? 0.08 : 0.01;
+        for (i = 0; i < count; i++) {
+          b = i * 3;
+          var fall = fallBase * speed[i];
+          pos[b] += wind.x * dt + Math.sin(time * 0.8 + phase[i]) * wobbleXY;
+          pos[b + 1] -= fall * dt;
+          pos[b + 2] += wind.z * dt + Math.cos(time * 0.7 + phase[i]) * wobbleZ;
+          if (pos[b + 1] < -7) {
+            pos[b] = (Math.random() - 0.5) * 92;
+            pos[b + 1] = 33 + Math.random() * 12;
+            pos[b + 2] = (Math.random() - 0.5) * 92;
           }
         }
-        geo.attributes.position.needsUpdate = true;
+        if (isSnow) {
+          snowGeo.attributes.position.needsUpdate = true;
+          return;
+        }
+        // Streak each drop along its own velocity: mostly down, leaned by the
+        // wind, and longer the harder it is falling. A vertical line would
+        // look painted on; this leans with the front.
+        var streak = 0.9 + amount * 1.5;
+        for (i = 0; i < count; i++) {
+          b = i * 3;
+          var v = i * 6;
+          var vy = -fallBase * speed[i];
+          var len = Math.hypot(wind.x, vy, wind.z) || 1;
+          var sx = (wind.x / len) * streak * speed[i];
+          var sy = (vy / len) * streak * speed[i];
+          var sz = (wind.z / len) * streak * speed[i];
+          rainPos[v] = pos[b];
+          rainPos[v + 1] = pos[b + 1];
+          rainPos[v + 2] = pos[b + 2];
+          rainPos[v + 3] = pos[b] - sx;
+          rainPos[v + 4] = pos[b + 1] - sy;
+          rainPos[v + 5] = pos[b + 2] - sz;
+        }
+        rainGeo.attributes.position.needsUpdate = true;
       }
     };
   }
