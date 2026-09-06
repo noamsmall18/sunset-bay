@@ -88,6 +88,9 @@
         }
         x = door.x; z = door.z; yaw = door.yaw;
         debugSpawn = true;
+      } else if (this.game.dev && location.hash.indexOf('spawn=boardwalk') >= 0) {
+        x = this.game.layout.beachX + 12; z = 405; yaw = Math.PI;
+        debugSpawn = true;
       } else if (this.game.dev && location.hash.indexOf('spawn=airport') >= 0) {
         x = -312; z = -476; yaw = Math.PI;
         debugSpawn = true;

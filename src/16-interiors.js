@@ -184,6 +184,34 @@
   };
 
   Interiors.prototype.buildRoom = function (t, name, index, cols) {
+    // Only address metadata belongs in the startup path. Geometry, textures,
+    // furniture and collision are constructed behind the door fade on entry.
+    var ox = BASE_X + (index % cols) * CELL;
+    var oz = BASE_Z + Math.floor(index / cols) * CELL;
+    return { type: t, name: name, index: index, cols: cols, x: ox, z: oz,
+      hw: t.w / 2, hd: t.d / 2, h: t.h * (t.levels || 1), levels: t.levels || 1,
+      levelHeight: t.h, service: t.service, group: null, props: [], hotspots: [],
+      exit: { x: ox, z: oz + t.d / 2 - 1.1 },
+      spawn: { x: ox, z: oz + t.d / 2 - 2.6 } };
+  };
+
+  Interiors.prototype.ensureRoom = function (room) {
+    if (room.group) return room;
+    var previousRng = this.rng;
+    this.rng = M.rng(3141 + room.index * 7919);
+    try {
+      var built = this.materializeRoom(room.type, room.name, room.index, room.cols);
+      // Keep door/save references and collected loot flags intact.
+      for (var key in built) {
+        if (key !== 'robbed' && key !== 'stashTaken') room[key] = built[key];
+      }
+      if (SB.CityLife) SB.CityLife.decorate(this, room);
+      room.group.visible = false;
+    } finally { this.rng = previousRng; }
+    return room;
+  };
+
+  Interiors.prototype.materializeRoom = function (t, name, index, cols) {
     var ox = BASE_X + (index % cols) * CELL;
     var oz = BASE_Z + Math.floor(index / cols) * CELL;
     var rng = this.rng;
@@ -892,6 +920,7 @@
       var entry = {
         room: room,
         x: dx + face.nx * 1.5,
+        y: baseY,
         z: dz + face.nz * 1.5,
         yaw: Math.atan2(-face.nz, -face.nx),
         group: group, pad: pad, glow: glow,
@@ -1026,6 +1055,8 @@
 
   Interiors.prototype.activateHotspot = function (spot) {
     var g = this.game, p = g.player, text = '';
+    if (g.cityLife && spot.kind === 'journal') { g.cityLife.journal(); return; }
+    if (g.cityLife && spot.kind === 'localwork') { g.cityLife.work(this.current); return; }
     switch (spot.kind) {
       case 'cooler': text = 'Cold case checked. Someone left a note in the ice.'; break;
       case 'notice': text = '“No cameras after midnight.” The handwriting is fresh.'; break;
@@ -1075,7 +1106,7 @@
     this.pending = null;
     if (!pd) return;
     if (pd.kind === 'in') {
-      var room = pd.door.room;
+      var room = this.ensureRoom(pd.door.room);
       this.returnPoint = { x: pd.door.x, z: pd.door.z, yaw: pd.door.yaw + Math.PI };
       this.current = room;
       if (room.group) room.group.visible = true;
@@ -1138,6 +1169,17 @@
     // A menu is open: do not let E fall through and immediately reopen it.
     if (g.uiBlocking) { this.prompt = null; return; }
 
+    if (g.deliveries && g.deliveries.canHandoff()) {
+      this.prompt = { text: 'Hand over delivery', key: 'E' };
+      if (g.input.actHit('interact')) g.deliveries.handoff();
+      return;
+    }
+    if (g.cityLife && g.cityLife.near && p.mode === 'foot' && !p.dead &&
+      !(this.current && M.dist2(p.pos.x, p.pos.z, this.current.exit.x, this.current.exit.z) < 4.84)) {
+      this.prompt = { text: 'Talk to ' + g.cityLife.near.role, key: 'E' };
+      if (g.input.actHit('interact')) g.cityLife.talk(g.cityLife.near);
+      return;
+    }
     if (p.mode !== 'foot' || p.dead) { this.prompt = null; }
     else if (this.current) {
       var d = M.dist(p.pos.x, p.pos.z, this.current.exit.x, this.current.exit.z);
@@ -1251,7 +1293,7 @@
   Interiors.prototype.render = function (dt) {
     // club floor pulses
     if (this.current && this.current.tiles) {
-      var t = performance.now() / 1000;
+      var t = this.game.time;
       for (var i = 0; i < this.current.tiles.length; i++) {
         var tile = this.current.tiles[i];
         var h = (Math.sin(t * 2.2 + i * 0.7) * 0.5 + 0.5);
@@ -1260,9 +1302,14 @@
       this.lamp.color.setHSL((t * 0.12) % 1, 0.7, 0.55);
     }
     var lamps = this.game.sky.lampFactor();
-    var now = performance.now();
+    var now = this.game.time * 1000;
+    var p = this.game.player;
+    var distance = SB.Q.tier === 'low' ? 28 : (SB.Q.tier === 'medium' ? 85 : 140);
     for (i = 0; i < this.doors.length; i++) {
       var d = this.doors[i];
+      d.group.visible = !this.game.worldHidden && !!p &&
+        M.dist2(d.x, d.z, p.pos.x, p.pos.z) < distance * distance;
+      if (!d.group.visible) continue;
       d.glow.material.opacity = 0.25 + lamps * 0.5;
       d.pad.material.opacity = 0.18 + Math.sin(now / 520 + i) * 0.06 + lamps * 0.14;
     }

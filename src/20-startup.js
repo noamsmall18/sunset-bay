@@ -22,6 +22,9 @@
     });
     var lastTap = 0;
     document.addEventListener('touchend', function (e) {
+      // Native menu controls need normal taps, including quick consecutive
+      // choices. Zoom suppression applies to the play surface only.
+      if (e.target && e.target.closest && e.target.closest('button,input,select,#explorePanel, .life-dialog')) return;
       var now = Date.now();
       if (now - lastTap < 320) e.preventDefault();
       lastTap = now;
@@ -67,7 +70,19 @@
 
     function fail(err) {
       errEl.style.display = 'block';
-      errEl.textContent = 'Sunset Bay failed to start:\n\n' + (err && err.stack ? err.stack : err);
+      var detail = String(err && err.message ? err.message : err);
+      var graphics = /WebGL|graphics context/i.test(detail);
+      msg.textContent = graphics ? '3D graphics unavailable' : 'Loading interrupted';
+      startBtn.disabled = true;
+      errEl.textContent = graphics
+        ? 'This browser could not start 3D graphics. Open this link directly in Safari or Chrome, close other graphics-heavy tabs, and try again.'
+        : 'The city could not finish loading. Check your connection and reload the page.';
+      if (/(^|[#,&])dev/.test(location.hash)) errEl.textContent += '\n\n' + (err && err.stack ? err.stack : detail);
+      var retry = document.createElement('button');
+      retry.type = 'button'; retry.textContent = 'Reload game';
+      retry.style.cssText = 'display:block;min-height:48px;margin-top:16px;padding:10px 18px;font:inherit;cursor:pointer';
+      retry.addEventListener('click', function () { location.reload(); });
+      errEl.appendChild(retry);
     }
 
     var game = SB.boot(
@@ -107,18 +122,20 @@
           s.drawCalls + ' draws';
         var choices = perf.querySelectorAll('[data-quality]');
         for (var i = 0; i < choices.length; i++) {
-          choices[i].classList.toggle('selected', choices[i].dataset.quality === SB.Q.mode ||
-            (SB.Q.mode === 'auto' && choices[i].dataset.quality === 'auto'));
+          choices[i].classList.toggle('selected', choices[i].dataset.quality ===
+            (SB.Q.mode === 'auto' ? 'auto' : SB.Q.tier));
         }
       }
 
       function openPerformance() {
         if (!perf) return;
+        if (g.uiBlocking || (g.activities && g.activities.open)) return;
         if (g.started) {
           perfWasPaused = g.paused;
           g.setPaused(true);
         }
         g.uiBlocking = true;
+        if (document.pointerLockElement && document.exitPointerLock) document.exitPointerLock();
         perf.classList.add('on');
         refreshPerformance();
       }
@@ -127,7 +144,7 @@
         if (!perf) return;
         perf.classList.remove('on');
         g.uiBlocking = false;
-        if (g.started && !perfWasPaused) g.setPaused(false);
+        if (g.started && !perfWasPaused) { g.setPaused(false); g.input.requestLock(); }
       }
 
       perfBtn.addEventListener('click', openPerformance);
@@ -174,11 +191,21 @@
         if (restore && saved) {
           try { SB.Save.apply(g, saved); }
           catch (err) { console.warn('[save] could not restore, starting fresh', err); }
-        } else if (SB.Save && SB.Save.available) {
+          // The coastal expansion keeps its own half of the run - race
+          // records, discoveries, speed-trap bests, looted rooms, deliveries
+          // and city life - under a separate key. Restore it on the same
+          // choice so the two halves can never disagree about which run the
+          // player is in.
+          if (g.saveGame) {
+            try { g.saveGame.restore(); }
+            catch (err2) { console.warn('[save] activity progress did not restore', err2); }
+          }
+        } else {
           // Starting a new game deliberately drops the old run, otherwise the
           // first autosave silently overwrites it anyway and the player never
-          // got the choice.
-          SB.Save.clear();
+          // got the choice. Both halves go.
+          if (SB.Save && SB.Save.available) SB.Save.clear();
+          if (g.saveGame) g.saveGame.clear();
         }
         if (touchMode) goFullscreen();
         boot.classList.add('gone');
@@ -219,7 +246,7 @@
         // Pointer lock is the pause signal: losing it pauses, clicking resumes.
         g.input.onLockChange = function (locked) {
           if (!started) return;
-          g.setPaused(!locked);
+          g.setPaused(!locked || !!g.uiBlocking);
         };
         document.addEventListener('click', function () {
           if (started && !g.input.locked && !g.uiBlocking) g.input.requestLock();

@@ -631,6 +631,16 @@
 
   // Call on any camera cut - a teleport, a respawn, walking into a building -
   // so the reprojection does not smear the whole frame across the jump.
+  Post.prototype.dispose = function () {
+    // Quality downgrades release GPU targets, not just hide their passes.
+    for (var key in this) {
+      var value = this[key];
+      if (value && (value.isWebGLRenderTarget || value.isMaterial || value.isTexture)) value.dispose();
+    }
+    if (this.quad && this.quad.geometry) this.quad.geometry.dispose();
+    this.enabled = false;
+  };
+
   Post.prototype.resetHistory = function () {
     var cam = this.camera;
     cam.updateMatrixWorld();
@@ -651,7 +661,7 @@
     var r = this.renderer;
     var cam = this.camera;
     ctx = ctx || {};
-    this.time += ctx.dt || 0.016;
+    this.time += ctx.dt === undefined ? 0.016 : ctx.dt;
 
     cam.updateMatrixWorld();
     this.invProj.copy(cam.projectionMatrixInverse);

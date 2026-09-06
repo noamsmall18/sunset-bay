@@ -1,4 +1,5 @@
 <title>Sunset Bay</title>
+<meta name="description" content="Explore Sunset Bay: an open-world coastal driving game with a boardwalk, aircraft, boats and time trials.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Barlow+Condensed:wght@400;500;600;700&display=swap">
@@ -329,6 +330,43 @@
   <div id="saveInfo"></div>
 </div>
 
+<button id="exploreButton" type="button" hidden>Explore <span>Tab</span></button>
+<div id="activityStatus" role="status" hidden></div>
+<section id="explorePanel" role="dialog" aria-modal="true" aria-labelledby="exploreTitle" hidden>
+  <header class="explore-head"><div><p class="explore-kicker">SUNSET BAY / COASTAL EXPANSION</p><h2 id="exploreTitle">Make the city yours.</h2></div><button id="exploreClose" type="button" aria-label="Close explore menu">Back to game</button></header>
+  <p class="explore-intro">Take a timed drive, find the new boardwalk, or watch the city light up from the lighthouse. Choose a destination to get directions.</p>
+  <div id="activityCards"></div>
+  <div class="world-controls"><div><h3>Set the mood</h3><p>The day continues from your chosen hour.</p></div><div class="world-buttons"><button data-hour="12.5" type="button">Clear day</button><button data-hour="17.6" type="button">Golden hour</button><button data-hour="22" type="button">City lights</button></div></div>
+  <footer class="explore-footer"><p id="saveState"></p><div><button id="cancelRun" type="button">Cancel time trial</button><button id="saveProgress" type="button">Save progress</button></div></footer>
+</section>
+<style>
+  [hidden] { display: none !important; }
+  #exploreButton { position: fixed; z-index: 12; bottom: max(22px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); background: #101f2bed; color: #f4e6ce; border: 1px solid #c79859; border-radius: 6px; padding: 12px 22px; font: 700 16px var(--ui); cursor: pointer; }
+  #exploreButton span { margin-left: 14px; opacity: .65; font-size: 14px; }
+  #activityStatus { position: fixed; z-index: 12; top: max(18px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); max-width: 44vw; background: #0b2029eb; color: #80eee0; border-top: 2px solid #4bd6d0; padding: 12px 18px; font: 600 16px var(--ui); text-align: center; pointer-events: none; }
+  #explorePanel { position: fixed; z-index: 65; inset: 0; overflow: auto; overscroll-behavior: contain; touch-action: pan-y; padding: max(32px, env(safe-area-inset-top)) max(5vw, env(safe-area-inset-right)) max(28px, env(safe-area-inset-bottom)); color: #eef3f4; background: linear-gradient(125deg, #081c27, #101920 60%, #28201b); }
+  #explorePanel * { touch-action: pan-y; }
+  .explore-head, .explore-footer, .world-controls { display: flex; justify-content: space-between; align-items: center; gap: 24px; }
+  .explore-kicker { color: #73d9d1; letter-spacing: .12em; font-size: 14px; font-weight: 700; margin: 0 0 12px; }
+  #exploreTitle { font: 400 clamp(28px, 4vw, 52px)/1.1 var(--display); margin: 0; letter-spacing: -.025em; }
+  .explore-intro { color: #aebec5; font-size: 17px; max-width: 730px; line-height: 1.6; margin: 22px 0 28px; }
+  #activityCards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+  .activity-card { display: flex; flex-direction: column; align-items: flex-start; background: #142631; border: 1px solid #30424c; border-top: 3px solid var(--accent); border-radius: 6px; padding: 22px; min-width: 0; }
+  .activity-card h3 { font: 700 25px var(--ui); margin: 0 0 10px; color: #f0eee6; }
+  .activity-card p { font-size: 16px; color: #b5c3c9; line-height: 1.55; margin: 0 0 22px; flex: 1; }
+  #explorePanel button { border: 1px solid #6e858d; border-radius: 5px; color: #e6f3f1; background: #203843; min-height: 44px; padding: 10px 18px; font: 700 16px var(--ui); cursor: pointer; }
+  #explorePanel button:hover { border-color: #68e5d7; background: #284955; }
+  #explorePanel button:focus-visible, #exploreButton:focus-visible { outline: 3px solid #ffe0a1; outline-offset: 3px; }
+  #explorePanel button:disabled { opacity: .4; cursor: default; }
+  .activity-card button { color: var(--accent) !important; }
+  .world-controls { border-top: 1px solid #3e484d; padding-top: 24px; margin-top: 30px; }
+  .world-controls h3 { font: 700 22px var(--ui); margin: 0 0 6px; }
+  .world-controls p, .explore-footer p { color: #aebdc4; font-size: 14px; margin: 0; }
+  .world-buttons, .explore-footer > div { display: flex; flex-wrap: wrap; gap: 10px; }
+  .explore-footer { margin-top: 28px; padding-top: 22px; border-top: 1px solid #39444c; }
+  @media (max-width: 850px) { #activityCards { grid-template-columns: repeat(2, minmax(0, 1fr)); } .explore-head { align-items: flex-start; } #activityStatus { top: 80px; max-width: 46vw; font-size: 14px; padding: 8px 12px; } }
+  @media (max-width: 520px) { #activityCards { grid-template-columns: 1fr; } .explore-head, .world-controls, .explore-footer { align-items: flex-start; flex-direction: column; gap: 16px; } #explorePanel { padding: 24px 18px; } .explore-intro { font-size: 16px; } }
+</style>
 <pre id="err"></pre>
 
 <!--THREE-->

@@ -88,11 +88,15 @@
 
     window.addEventListener('keydown', function (e) {
       if (!game.started) return;
+      if (game.activities && game.activities.open) return;
       if (e.code === 'KeyM' && !self.shop) {
         self.setMapOpen(!self.mapOpen);
         e.preventDefault();
       }
-      if ((e.code === 'KeyP' || e.code === 'Tab') && !self.shop) {
+      // Tab belongs to the Explore menu, which is the coastal expansion's
+      // documented control on desktop. The progress page keeps P; binding
+      // both to Tab opened both panels on one keypress.
+      if (e.code === 'KeyP' && !self.shop) {
         self.setStatsOpen(!self.statsOpen);
         e.preventDefault();
       }
@@ -269,6 +273,7 @@
   // use to orient themselves.
   HUD.prototype.mapPlaces = function () {
     var g = this.game, places = [], L = g.layout;
+    if (g.activities) places = places.concat(g.activities.places());
     var mission = this.missionPlace();
     if (mission) places.push(mission);
     // A contract you can see on the radar but not route to is a contract you
@@ -902,6 +907,8 @@
     var text = null, key = null;
     if (g.interiors && g.interiors.prompt) {
       text = g.interiors.prompt.text; key = g.interiors.prompt.key;
+    } else if (g.activities && g.activities.prompt) {
+      text = g.activities.prompt; key = 'E';
     } else if (g.rooftops && g.rooftops.prompt) {
       text = g.rooftops.prompt; key = 'E';
     } else if (p.boatInteriorPrompt) {
@@ -1573,7 +1580,7 @@
     }
 
     ctx.textAlign = 'center'; ctx.fillStyle = DIM; ctx.font = this.font(600, 12);
-    ctx.fillText('P OR TAB TO CLOSE', this.w / 2, this.h - 20 * this.s - this.sa.bottom);
+    ctx.fillText('P TO CLOSE', this.w / 2, this.h - 20 * this.s - this.sa.bottom);
   };
 
   HUD.prototype.mapTap = function (px, py) {

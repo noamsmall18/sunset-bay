@@ -60,6 +60,11 @@
     '    float tw = 0.55 + 0.45 * sin(uTime * 2.3 + st * 40.0);',
     '    float star = smoothstep(0.9975, 0.99985, st) * tw;',
     '    col += vec3(0.85, 0.9, 1.0) * star * uNight * 1.5 * smoothstep(0.0, 0.22, y);',
+    '    vec3 moonDir = normalize(vec3(-0.35, 0.65, -0.68));',
+    '    float md = max(dot(d, moonDir), 0.0);',
+    '    float moon = smoothstep(0.9994, 0.9997, md);',
+    '    float crescent = 1.0 - smoothstep(0.9994, 0.9997, dot(d, normalize(moonDir + vec3(0.022, 0.005, 0.0))));',
+    '    col += vec3(0.66, 0.78, 1.0) * uNight * (moon * crescent * 1.8 + pow(md, 130.0) * 0.08);',
     '  }',
     // clouds: project the view ray onto a high plane so they sit flat
     '  if (y > 0.008) {',
@@ -197,7 +202,7 @@
     // A tessellated surface gives the analytic ocean a real silhouette and
     // catches highlights as the camera moves. Low tier keeps the same shape
     // at a smaller vertex budget; gameplay still samples the exact same waves.
-    var waterSegments = Q.tier === 'high' ? 64 : (Q.tier === 'medium' ? 44 : 28);
+    var waterSegments = SB.Q.tier === 'high' ? 64 : (SB.Q.tier === 'medium' ? 44 : 28);
     var waterSize = Math.min(3600, Q.far * 1.4);
     var wgeo = new THREE.PlaneGeometry(waterSize, waterSize, waterSegments, waterSegments);
     wgeo.rotateX(-Math.PI / 2);
@@ -261,6 +266,19 @@
   }
 
   Sky.prototype.setHour = function (h) { this.hour = ((h % 24) + 24) % 24; };
+
+  Sky.prototype.setBudget = function () {
+    var q = SB.Q.settings;
+    var segments = SB.Q.tier === 'high' ? 64 : (SB.Q.tier === 'medium' ? 44 : 28);
+    var size = Math.min(3600, q.far * 1.4);
+    var old = this.water.geometry;
+    if (old.parameters.widthSegments === segments && old.parameters.width === size) return;
+    var geometry = new THREE.PlaneGeometry(size, size, segments, segments);
+    geometry.rotateX(-Math.PI / 2);
+    this.water.geometry = geometry;
+    old.dispose();
+    this.water.userData.waveTimer = 0;
+  };
 
   // The weather director calls this instead of mutating sky uniforms directly.
   // Keeping the transition here preserves the day/night cycle while allowing
@@ -349,7 +367,7 @@
   Sky.prototype.update = function (dt, camera, wetTargetMat) {
     var Q = SB.Q.settings;
     if (!this.paused) this.hour = (this.hour + dt * this.speed * 24 / 24 * 1) % 24;
-    this.uniforms.uTime.value += dt;
+    this.uniforms.uTime.value = this.world ? (this.world.time || 0) : this.uniforms.uTime.value + dt;
 
     // Precipitation is part of the same state transition as the palette, so
     // the first frame of a storm already feels wet instead of lagging a frame.
@@ -428,7 +446,9 @@
         camera.position.y - Math.abs(dir.y) * 60 - 20,
         camera.position.z - dir.z * 120);
       this.bounceTarget.updateMatrixWorld();
-      this.mesh.position.set(cx, 0, cz);
+      this.mesh.position.copy(camera.position);
+      // A dome authored at a larger preset must not be clipped on Low.
+      this.mesh.scale.setScalar(Math.min(Q.skyRadius, camera.far * 0.90) / this.mesh.geometry.parameters.radius);
       this.water.position.z = cz;
     }
 
@@ -436,7 +456,7 @@
     // query, then scroll the finer normal detail over it.
     this.water.userData.waveTimer -= dt;
     if (this.water.userData.waveTimer <= 0) {
-      this.water.userData.waveTimer = Q.tier === 'low' ? 0.07 : 0.033;
+      this.water.userData.waveTimer = SB.Q.tier === 'low' ? 0.10 : (SB.Q.tier === 'high' ? 0.033 : 0.05);
       var attr = this.water.geometry.attributes.position;
       var wt = this.uniforms.uTime.value;
       var world = this.world;

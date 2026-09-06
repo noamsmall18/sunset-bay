@@ -35,6 +35,7 @@
       { label: 'Opening the roofs', fn: function () { self.stepRooftops(); } },
       { label: 'Furnishing interiors', fn: function () { self.stepInteriors(); } },
       { label: 'Waking the population', fn: function () { self.stepSystems(); } },
+      { label: 'Opening the waterfront', fn: function () { self.stepExpansion(); } },
       { label: 'Warming up', fn: function () { self.stepFinish(); } }
     ];
   };
@@ -61,6 +62,9 @@
     // Tone mapping is done by the post composite so the bloom threshold can
     // work on real HDR values; if post fails to build we turn it back on.
     renderer.toneMapping = THREE.NoToneMapping;
+    // Report the complete frame, including post passes, rather than only the
+    // final full-screen triangle. Reset once at the start of render().
+    renderer.info.autoReset = false;
     c.appendChild(renderer.domElement);
     renderer.domElement.id = 'view';
 
@@ -88,11 +92,13 @@
 
   Game.prototype.stepLayout = function () {
     this.layout = SB.Roads.build();
+    this.layout.playBounds = { minX: this.layout.bounds.minX - 220, maxX: this.layout.bounds.maxX + 60,
+      minZ: this.layout.bounds.minZ - 60, maxZ: this.layout.bounds.maxZ + 60 };
     this.world = new SB.World();
     this.world.beachX = this.layout.beachX;
     this.sky = new SB.Sky(this.scene, this.renderer);
     this.sky.world = this.world;
-    this.sky.setHour(9.2);
+    this.sky.setHour(17.6);
   };
 
   Game.prototype.stepTerrain = function () {
@@ -156,9 +162,21 @@
     if (SB.Save) SB.Save.attach(this);
   };
 
+  Game.prototype.stepExpansion = function () {
+    if (SB.Coast) this.coast = new SB.Coast(this);
+    if (SB.Activities) this.activities = new SB.Activities(this);
+    if (SB.CityLife) this.cityLife = new SB.CityLife(this);
+    if (SB.Deliveries) this.deliveries = new SB.Deliveries(this);
+    // Constructed but NOT restored here. Restoring during world build ignored
+    // the title card: the player could pick "New game" and still start with
+    // the previous run's progress, because this had already put it back.
+    // 20-startup.js now restores it only when Continue is chosen.
+    if (SB.SaveGame) this.saveGame = new SB.SaveGame(this);
+  };
+
   Game.prototype.stepFinish = function () {
     var self = this;
-    if (SB.Post) {
+    if (SB.Post && SB.Q.settings.post) {
       try {
         this.post = new SB.Post(this.renderer, this.scene, this.camera);
       } catch (err) {
@@ -171,7 +189,7 @@
       this.renderer.toneMappingExposure = 1.22;
     }
     this.loop = new SB.Loop(1 / 60,
-      function (dt, t) { self.fixed(dt, t); },
+      function (dt, t) { return self.fixed(dt, t); },
       function (dt, alpha) { self.render(dt, alpha); });
     if (SB.Touch && SB.Q.touch) this.touch = new SB.Touch(this);
     SB.Q.apply(this);
@@ -182,6 +200,7 @@
 
   Game.prototype.setPaused = function (on) {
     this.paused = !!on;
+    if (this.paused && this.input) this.input.endTick();
     var el = document.getElementById('paused');
     if (el) el.classList.toggle('on', this.paused);
     if (this.audio) this.audio.setMuffled(this.paused);
@@ -197,13 +216,16 @@
   };
 
   Game.prototype.fixed = function (dt, t) {
-    if (this.paused) return;
+    if (this.paused) { this.input.endTick(); return false; }
     this.time = t;
     this.world.time = t;
     SB.Roads.updateLights(this.layout, t);
     if (this.weather && this.input.actHit('weather')) this.weather.cycle();
     if (this.weather) this.weather.fixed(dt);
+    if (this.deliveries) this.deliveries.fixed(dt);
+    if (this.cityLife) this.cityLife.fixed(dt);
     if (this.interiors) this.interiors.fixed(dt);
+    if (this.paused) { this.input.endTick(); return false; }
     if (this.player) this.player.fixed(dt);
     if (this.traffic) this.traffic.fixed(dt);
     if (this.boats) this.boats.fixed(dt);
@@ -217,10 +239,15 @@
     if (this.progress) this.progress.fixed(dt);
     if (this.garage) this.garage.fixed(dt);
     if (this.rhythm) this.rhythm.fixed(dt);
+    if (this.activities) this.activities.fixed(dt);
+    if (this.saveGame) this.saveGame.fixed(dt);
     if (SB.Save && SB.Save.tick) SB.Save.tick(dt);
+    this.input.endTick();
   };
 
   Game.prototype.render = function (dt, alpha) {
+    if (this.paused || !this.started) dt = 0;
+    this.renderer.info.reset();
     SB._game = this;
     var cam = this.camera;
     if (this.player) this.player.render(dt, cam);
@@ -246,6 +273,10 @@
     if (this.missions) this.missions.render(dt);
     if (this.fx) this.fx.render(dt);
     if (this.audio) this.audio.render(dt, this);
+    if (this.coast) this.coast.render(dt, lamps);
+    if (this.activities) this.activities.render(dt);
+    if (this.cityLife) this.cityLife.render(dt);
+    if (this.deliveries) this.deliveries.render(dt);
 
     // city windows light up after dark
     for (var i = 0; i < this.city.emissiveTargets.length; i++) {
@@ -358,6 +389,10 @@
       }
       if (boundaryCount !== 4) issues.push('map boundary board is incomplete (' + boundaryCount + '/4)');
       if (this.interiors) {
+        // Development-only exhaustive coverage; normal play builds on entry.
+        for (var rbuild = 0; rbuild < this.interiors.rooms.length; rbuild++) {
+          this.interiors.ensureRoom(this.interiors.rooms[rbuild]);
+        }
         var names = Object.create(null);
         var multiLevel = 0, banks = 0, hotspotTotal = 0, generatedRooms = 0;
         var generatedArchetypes = Object.create(null);
