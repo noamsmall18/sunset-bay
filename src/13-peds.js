@@ -22,7 +22,8 @@
     this.grid = new SB.Grid(14);
     this._q = [];
     this._stamp = 1;
-    this.density = 1;
+    this.density = 1;     // interior gate: 0 while indoors
+    this.rhythm = 1;      // time-of-day multiplier, owned by SB.Rhythm
     this.maxPeds = SB.Q.settings.peds;
   }
 
@@ -112,6 +113,20 @@
     return p;
   };
 
+  // Retire the furthest pedestrian when the hour calls for fewer of them.
+  // Only ones well out of view, so nobody blinks out in front of you.
+  Peds.prototype.trimFurthest = function (px, pz) {
+    var worst = -1, wd = -1;
+    for (var i = 0; i < this.list.length; i++) {
+      var p = this.list[i];
+      if (p.dead) continue;
+      var d = M.dist2(p.x, p.z, px, pz);
+      if (d > wd) { wd = d; worst = i; }
+    }
+    if (worst < 0 || wd < 70 * 70) return;
+    this.recycle(this.list.splice(worst, 1)[0]);
+  };
+
   Peds.prototype.nearestBlock = function (x, z) {
     var best = this.L.blocks[0], bd = 1e18;
     for (var i = 0; i < this.L.blocks.length; i++) {
@@ -130,7 +145,12 @@
     this.spawnTimer -= dt;
     if (this.spawnTimer <= 0) {
       this.spawnTimer = 0.22;
-      if (this.list.length < this.maxPeds * this.density) this.spawn(px, pz);
+      var want = this.maxPeds * this.density * this.rhythm;
+      if (this.list.length < want) {
+        this.spawn(px, pz);
+      } else if (this.list.length > want + 4) {
+        this.trimFurthest(px, pz);
+      }
     }
 
     this.grid.map.clear();

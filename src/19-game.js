@@ -9,6 +9,10 @@
     this.bus = new SB.Bus();
     this.dev = location.hash.indexOf('dev') >= 0;
     this.paused = false;
+    // Whether a full-screen panel owns the input. Initialised here so it is
+    // always a boolean: code that saves and restores it should not have to
+    // deal with undefined on the first read.
+    this.uiBlocking = false;
     this.time = 0;
     this.cullDistance = 1e9;
     this._postCtx = { night: 0, wet: 0, sunDir: null, sunColor: null, dt: 0.016 };
@@ -145,6 +149,8 @@
     if (SB.Missions) this.missions = new SB.Missions(this);
     if (SB.Progress) this.progress = new SB.Progress(this);
     if (SB.Garage) this.garage = new SB.Garage(this);
+    if (SB.Rhythm) this.rhythm = new SB.Rhythm(this);
+    if (SB.CameraModes) this.cameras = new SB.CameraModes(this);
     if (SB.HUD) this.hud = new SB.HUD(this);
     if (this.player) this.player.spawn();
     if (SB.Save) SB.Save.attach(this);
@@ -210,6 +216,7 @@
     if (this.missions) this.missions.fixed(dt);
     if (this.progress) this.progress.fixed(dt);
     if (this.garage) this.garage.fixed(dt);
+    if (this.rhythm) this.rhythm.fixed(dt);
     if (SB.Save && SB.Save.tick) SB.Save.tick(dt);
   };
 
@@ -217,6 +224,10 @@
     SB._game = this;
     var cam = this.camera;
     if (this.player) this.player.render(dt, cam);
+    // View modes layer on top of the follow rig the player just positioned,
+    // so 'follow' costs nothing and everything downstream - the sky, the
+    // culling, the post pipeline - sees one camera as it always did.
+    if (this.cameras) this.cameras.render(dt, cam);
     this.sky.update(dt, cam, this.wetMats);
     this.world.wetness = this.sky.wetness;
     if (this.weather) this.weather.render(dt);
@@ -819,6 +830,58 @@
         this.traffic.recycle(dmgB);
       }
 
+      // ---- rhythm: the city has to actually change across the day ----------
+      if (this.rhythm && this.traffic && this.peds) {
+        var keptHour = this.sky.hour;
+        var quiet = null, rush = null;
+        this.sky.setHour(3); this.rhythm.apply(true);
+        quiet = { t: this.rhythm.traffic, p: this.rhythm.peds, parked: this.traffic.maxParked };
+        this.sky.setHour(8); this.rhythm.apply(true);
+        rush = { t: this.rhythm.traffic, p: this.rhythm.peds, parked: this.traffic.maxParked };
+        if (!(rush.t > quiet.t * 2)) issues.push('rhythm: rush hour is not busier than 3 a.m.');
+        if (!(rush.p > quiet.p * 2)) issues.push('rhythm: no pedestrian difference across the day');
+        // Parked cars run the other way round: full overnight, emptier by day.
+        if (!(quiet.parked > rush.parked)) issues.push('rhythm: parked population does not invert');
+        // The bias must reach the picker and actually change the mix.
+        this.sky.setHour(2); this.rhythm.apply(true);
+        var nightBias = this.traffic.typeBias;
+        this.sky.setHour(12); this.rhythm.apply(true);
+        var dayBias = this.traffic.typeBias;
+        if (!nightBias || !(nightBias.taxi > 1)) issues.push('rhythm: no night taxi bias');
+        if (nightBias === dayBias) issues.push('rhythm: the traffic mix never changes');
+        this.sky.setHour(keptHour); this.rhythm.apply(true);
+      }
+
+      // ---- camera modes ----------------------------------------------------
+      if (this.cameras && this.player) {
+        var cams = this.cameras;
+        var startMode = cams.mode;
+        cams.setMode('first');
+        cams.render(1 / 60, this.camera);
+        if (this.player.mode === 'foot' && this.player.char.root.visible) {
+          issues.push('first person still draws the player avatar');
+        }
+        var eye = new THREE.Vector3();
+        cams.eyePoint(eye);
+        if (Math.abs(eye.y - (this.player.pos.y + 1.62)) > 0.01) {
+          issues.push('first person eye height is wrong on foot');
+        }
+        cams.setMode('follow');
+        cams.render(1 / 60, this.camera);
+        if (this.player.mode === 'foot' && !this.player.char.root.visible) {
+          issues.push('returning to third person left the avatar hidden');
+        }
+        // Photo mode must restore everything it takes over.
+        var pausedBefore = this.paused, blockBefore = this.uiBlocking;
+        cams.togglePhoto();
+        if (!this.paused) issues.push('photo mode did not stop the world');
+        cams.togglePhoto();
+        if (this.paused !== pausedBefore || this.uiBlocking !== blockBefore) {
+          issues.push('leaving photo mode did not restore the paused/ui state');
+        }
+        cams.setMode(startMode);
+      }
+
       // ---- save: capture and re-apply must be lossless ---------------------
       if (SB.Save && this.player) {
         var snap = SB.Save.capture(this);
@@ -850,7 +913,7 @@
         ' building doors, ' + this.interiors.rooms.length + ' unique furnished interiors, ' +
         generatedRooms + ' generated variants, ' + hotspotTotal + ' interior hotspots, ' +
         'multi-level/bank/vehicle/car-stability/boat/plane/heli/routing/contract/' +
-        'garage/damage/save probes clean)');
+        'garage/damage/rhythm/camera/save probes clean)');
     }
     this.selfTestIssues = issues;
   };

@@ -756,7 +756,19 @@
     ctx.font = this.font(600, 15);
     ctx.fillStyle = DIM;
     var hr = Math.floor(g.sky.hour), mi = Math.floor((g.sky.hour % 1) * 60);
-    ctx.fillText((hr < 10 ? '0' : '') + hr + ':' + (mi < 10 ? '0' : '') + mi, x, y);
+    var clockText = (hr < 10 ? '0' : '') + hr + ':' + (mi < 10 ? '0' : '') + mi;
+    // What the city is doing at this hour. Without it the daily rhythm is a
+    // thing the player feels but cannot name.
+    if (g.rhythm) {
+      var rw = ctx.measureText(clockText).width;
+      ctx.font = this.font(700, 10);
+      ctx.fillStyle = g.rhythm.period === 'rush' ? '#ffae6e'
+        : (g.rhythm.period === 'night' ? '#8ea6d8' : DIM);
+      ctx.fillText(g.rhythm.label(), x - rw - 9 * this.s, y);
+      ctx.font = this.font(600, 15);
+      ctx.fillStyle = DIM;
+    }
+    ctx.fillText(clockText, x, y);
 
     // The vitals column grows: stars appear, armour and stamina bars come and
     // go. Everything below it in the right-hand rail has to start from where

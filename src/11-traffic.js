@@ -21,11 +21,27 @@
       Number.isFinite(v.spec.len) && Number.isFinite(v.spec.mass);
   }
 
-  function pickType(rng) {
-    var r = rng();
-    var acc = 0;
-    for (var i = 0; i < TRAFFIC_TYPES.length; i++) {
-      acc += TRAFFIC_WEIGHT[i];
+  // `bias` is an optional map of type -> multiplier, used by the daily rhythm
+  // to put cabs on the road at 2 a.m. and delivery trucks on it at 5. The
+  // weights are re-normalised, so a bias changes the mix without changing how
+  // many cars there are.
+  function pickType(rng, bias) {
+    var i, total = 0;
+    if (!bias) {
+      var r0 = rng(), acc0 = 0;
+      for (i = 0; i < TRAFFIC_TYPES.length; i++) {
+        acc0 += TRAFFIC_WEIGHT[i];
+        if (r0 <= acc0) return TRAFFIC_TYPES[i];
+      }
+      return 'sedan';
+    }
+    for (i = 0; i < TRAFFIC_TYPES.length; i++) {
+      total += TRAFFIC_WEIGHT[i] * (bias[TRAFFIC_TYPES[i]] || 1);
+    }
+    if (!(total > 0)) return 'sedan';
+    var r = rng() * total, acc = 0;
+    for (i = 0; i < TRAFFIC_TYPES.length; i++) {
+      acc += TRAFFIC_WEIGHT[i] * (bias[TRAFFIC_TYPES[i]] || 1);
       if (r <= acc) return TRAFFIC_TYPES[i];
     }
     return 'sedan';
@@ -49,7 +65,9 @@
     this.parkTimer = 0;
     this._pt = { x: 0, z: 0 };
     this._dir = { x: 0, z: 0 };
-    this.density = 1;
+    this.density = 1;     // interior gate: 0 while indoors
+    this.rhythm = 1;      // time-of-day multiplier, owned by SB.Rhythm
+    this.typeBias = null;
     this.maxCars = SB.Q.settings.traffic;
     this.maxParked = SB.Q.settings.parked;
   }
@@ -122,7 +140,7 @@
     var spot = Roads.randomLanePoint(this.L, this.rng, px, pz, SPAWN_MIN, SPAWN_MAX, this._pt);
     // never drop a car on top of another one
     if (this.occupied(spot.x, spot.z, 7)) return null;
-    var v = this.acquire(pickType(this.rng));
+    var v = this.acquire(pickType(this.rng, this.typeBias));
     Roads.laneDir(this.L, spot.edge, spot.dir, this._dir);
     v.placeAt(spot.x, spot.z, Math.atan2(this._dir.z, this._dir.x));
     v.dormant = false;
@@ -138,6 +156,23 @@
     v.u = v.ai.cruise * this.rng.range(0.55, 1.0);
     this.active.push(v);
     return v;
+  };
+
+  // Recycle the active car furthest from the player. Used when the daily
+  // rhythm wants fewer cars on the road than are currently on it.
+  Traffic.prototype.trimFurthest = function (px, pz) {
+    var worst = -1, wd = -1;
+    for (var i = 0; i < this.active.length; i++) {
+      var v = this.active[i];
+      if (v.isPlayer || v.mission) continue;
+      var d = M.dist2(v.pos.x, v.pos.z, px, pz);
+      if (d > wd) { wd = d; worst = i; }
+    }
+    // Never pull a car out of view: 90 m is beyond the point where one
+    // vanishing is noticeable, and short of the despawn radius.
+    if (worst < 0 || wd < 90 * 90) return;
+    var gone = this.active.splice(worst, 1)[0];
+    this.recycle(gone);
   };
 
   Traffic.prototype.occupied = function (x, z, r) {
@@ -187,7 +222,16 @@
     this.spawnTimer -= dt;
     if (this.spawnTimer <= 0) {
       this.spawnTimer = 0.30;
-      if (this.active.length < this.maxCars * this.density) this.spawnTrafficCar(px, pz);
+      var want = this.maxCars * this.density * this.rhythm;
+      if (this.active.length < want) {
+        this.spawnTrafficCar(px, pz);
+      } else if (this.active.length > want + 5) {
+        // The population used to only ever shrink by cars driving out of
+        // range, so the streets stayed rush-hour full for minutes after the
+        // rush. Retire the furthest car instead - one per tick, so the
+        // thinning is never something you can watch happen.
+        this.trimFurthest(px, pz);
+      }
     }
     this.parkTimer -= dt;
     if (this.parkTimer <= 0) {
