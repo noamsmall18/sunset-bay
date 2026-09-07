@@ -88,11 +88,15 @@
 
     window.addEventListener('keydown', function (e) {
       if (!game.started) return;
+      if (game.activities && game.activities.open) return;
       if (e.code === 'KeyM' && !self.shop) {
         self.setMapOpen(!self.mapOpen);
         e.preventDefault();
       }
-      if ((e.code === 'KeyP' || e.code === 'Tab') && !self.shop) {
+      // Tab belongs to the Explore menu, which is the coastal expansion's
+      // documented control on desktop. The progress page keeps P; binding
+      // both to Tab opened both panels on one keypress.
+      if (e.code === 'KeyP' && !self.shop) {
         self.setStatsOpen(!self.statsOpen);
         e.preventDefault();
       }
@@ -151,7 +155,11 @@
     this.w = w; this.h = h;
     // One scale factor for the whole HUD, driven by the short edge: a phone in
     // landscape is ~390px tall and cannot carry desktop-sized furniture.
-    this.s = M.clamp(Math.min(w, h) / 760, 0.62, 1.12);
+    // The automatic scale still drives the base size; the player setting is a
+    // multiplier on top, so a phone stays readable and someone who wants
+    // bigger text on a desktop can have it.
+    this.s = M.clamp(Math.min(w, h) / 760, 0.62, 1.12) *
+      (SB.Settings ? SB.Settings.hudScale() : 1);
     this.sa = safeArea();
     this.touchMode = !!this.game.isTouch;
     // height reserved for the touch utility row along the top right
@@ -269,6 +277,9 @@
   // use to orient themselves.
   HUD.prototype.mapPlaces = function () {
     var g = this.game, places = [], L = g.layout;
+    if (g.activities) places = places.concat(g.activities.places());
+    if (g.islands) places = places.concat(g.islands.landmarks);
+    if (g.fires) places = places.concat(g.fires.places());
     var mission = this.missionPlace();
     if (mission) places.push(mission);
     // A contract you can see on the radar but not route to is a contract you
@@ -902,6 +913,8 @@
     var text = null, key = null;
     if (g.interiors && g.interiors.prompt) {
       text = g.interiors.prompt.text; key = g.interiors.prompt.key;
+    } else if (g.activities && g.activities.prompt) {
+      text = g.activities.prompt; key = 'E';
     } else if (g.rooftops && g.rooftops.prompt) {
       text = g.rooftops.prompt; key = 'E';
     } else if (p.boatInteriorPrompt) {
@@ -1218,6 +1231,30 @@
     ctx.fillStyle = 'rgba(192,143,74,0.24)';
     T(L.beachX, wz0, a); T(L.beachX + 34, wz1, b);
     ctx.fillRect(a[0], a[1], b[0] - a[0], b[1] - a[1]);
+
+    // The islands are land, and a map that shows their name floating on open
+    // water is a map that has not told you they are there. Drawn from the same
+    // shoreline function the terrain is built from, so the outline on the map
+    // is the outline you sail around.
+    if (SB.Islands) {
+      var isles = SB.Islands.LIST;
+      for (var isl = 0; isl < isles.length; isl++) {
+        var it = isles[isl];
+        ctx.beginPath();
+        for (var ia = 0; ia <= 48; ia++) {
+          var iang = (ia / 48) * Math.PI * 2;
+          var ip = SB.Islands.shorePoint(it, iang, 4);
+          T(ip.x, ip.z, a);
+          if (ia === 0) ctx.moveTo(a[0], a[1]); else ctx.lineTo(a[0], a[1]);
+        }
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(152,150,116,0.40)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(214,196,150,0.55)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+    }
 
     var i;
     // District masses make the city legible without painting individual
@@ -1573,7 +1610,7 @@
     }
 
     ctx.textAlign = 'center'; ctx.fillStyle = DIM; ctx.font = this.font(600, 12);
-    ctx.fillText('P OR TAB TO CLOSE', this.w / 2, this.h - 20 * this.s - this.sa.bottom);
+    ctx.fillText('P TO CLOSE', this.w / 2, this.h - 20 * this.s - this.sa.bottom);
   };
 
   HUD.prototype.mapTap = function (px, py) {

@@ -36,6 +36,7 @@
 
   // Small utilities along the top right.
   var UTILITY = [
+    { id: 'explore', act: 'explore', label: 'GO', tap: true },
     { id: 'map', act: 'map', label: 'MAP', tap: true },
     { id: 'weapon', act: 'weapon', label: 'GUN', tap: true, footOnly: true },
     { id: 'horn', act: 'horn', label: 'HORN', tap: true, carOnly: true },
@@ -159,6 +160,10 @@
   Touch.prototype.press = function (spec, down) {
     var t = this.input.touch;
     var act = spec.act;
+    if (act === 'explore') {
+      if (down && this.game.activities) this.game.activities.toggle();
+      return;
+    }
 
     // Buttons that are one-shot commands rather than held states.
     if (act === 'pause') {
@@ -476,7 +481,9 @@
     // The action button doubles as the door prompt when one is available.
     var actionBtn = this.buttons.action;
     if (actionBtn) {
-      var prompt = (g.interiors && g.interiors.prompt) || p.boatInteriorPrompt;
+      var prompt = (g.interiors && g.interiors.prompt) || p.boatInteriorPrompt ||
+        (g.activities && g.activities.prompt ? { text: g.activities.prompt } : null) ||
+        (g.rooftops && g.rooftops.prompt ? { text: g.rooftops.prompt } : null);
       var spec = actionBtn.__spec;
       if (prompt) {
         spec.act = 'interact';

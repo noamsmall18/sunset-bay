@@ -157,9 +157,19 @@
   Q.apply = function (game) {
     var s = Q.settings;
     var r = game.renderer;
+    if (!s.post && game.post && game.post.dispose) {
+      game.post.dispose(); game.post = null;
+    }
+    // Low does not allocate the HDR/depth/SSR render targets at startup.
+    // Create the pipeline only if a player later selects an effects preset.
+    if (s.post && !game.post && SB.Post) {
+      try { game.post = new SB.Post(r, game.scene, game.camera); }
+      catch (err) { console.warn('[quality] post effects unavailable', err); }
+    }
     r.setPixelRatio(Q.pixelRatio());
     r.shadowMap.enabled = s.shadows;
     if (game.sky) {
+      if (game.sky.setBudget) game.sky.setBudget();
       game.sky.sun.castShadow = s.shadows;
       if (s.shadows && game.sky.sun.shadow.mapSize.width !== s.shadowSize) {
         game.sky.sun.shadow.mapSize.set(s.shadowSize, s.shadowSize);
@@ -208,10 +218,18 @@
       game.post.useSSR = !!s.ssr;
       game.post.useShafts = !!s.shafts;
       game.post.useMotion = !!s.motionBlur;
+      game.post.useFXAA = s.fxaa !== false;
+      game.post.ssrAmount = s.ssrAmount === undefined ? 1 : s.ssrAmount;
+      game.post.aoMat.uniforms.uSamples.value = s.aoSamples || 8;
+      game.post.aoMat.uniforms.uRadius.value = s.aoRadius || 1.4;
+      game.post.ssrMat.uniforms.uSteps.value = s.ssrSteps || 18;
       game.post.aoAmount = s.aoAmount === undefined ? 0.85 : s.aoAmount;
       game.post.motionAmount = s.motionAmount === undefined ? 0.55 : s.motionAmount;
       game.post.grain = s.grain === undefined ? 0.012 : s.grain;
       game.post.setSize(window.innerWidth, window.innerHeight, Q.pixelRatio());
+    } else {
+      r.toneMapping = THREE.ACESFilmicToneMapping;
+      r.toneMappingExposure = 1.22;
     }
     if (game.lights) game.lights.setBudget(s.lights, s.headlightSpots);
     game.cullDistance = s.cullDistance;
@@ -222,7 +240,7 @@
   // FPS, but a display running at 60Hz is treated as display-limited rather
   // than pointlessly forcing the quality scaler to its floor.
   Q.autoTune = function (game, dt, fps) {
-    if (!Q.auto || !game.started) return;
+    if (!Q.auto || !game.started || game.paused) return;
     Q._acc += dt;
     if (Q._acc < 0.5) return;
     Q._acc = 0;

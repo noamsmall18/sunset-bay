@@ -1,9 +1,8 @@
 <!doctype html>
 <html lang="en">
-<head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Sunset Bay</title>
+<meta name="description" content="Explore Sunset Bay: an open-world coastal driving game with a boardwalk, aircraft, boats and time trials.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Barlow+Condensed:wght@400;500;600;700&display=swap">
@@ -197,6 +196,24 @@
   .perf-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 12px 0 20px; color: var(--dim); font: 600 14px/1.3 var(--ui); }
   #perfStats { accent-color: var(--gold); width: 18px; height: 18px; }
   #perfClose { width: 100%; padding: 11px; color: #10131a; background: linear-gradient(180deg, #ffd873, #f0a13a); border: 0; border-radius: 3px; cursor: pointer; }
+  /* settings rows */
+  .set-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 9px 0; color: var(--dim); font: 600 14px/1.3 var(--ui); cursor: pointer; }
+  .set-row i { display: block; margin-top: 3px; font: 500 11px/1.3 var(--ui); font-style: normal; color: #6f7d90; letter-spacing: .02em; }
+  .set-row input[type=checkbox] { accent-color: var(--gold); width: 18px; height: 18px; flex: none; cursor: pointer; }
+  .set-slider { display: block; margin: 9px 0 13px; color: var(--dim); font: 600 13px/1.3 var(--ui); cursor: pointer; }
+  .set-slider > span { display: flex; justify-content: space-between; margin-bottom: 5px; }
+  .set-slider b { color: var(--ink); font-weight: 700; font-variant-numeric: tabular-nums; }
+  .set-slider input[type=range] { width: 100%; accent-color: var(--gold); height: 20px; cursor: pointer; }
+  #setReset {
+    width: 100%; padding: 9px; margin-bottom: 8px;
+    font: 700 12px/1 var(--ui); letter-spacing: .1em; text-transform: uppercase;
+    color: #c9d0d9; background: rgba(255,255,255,.06);
+    border: 1px solid rgba(255,255,255,.14); border-radius: 3px; cursor: pointer;
+  }
+  #setReset:hover { border-color: rgba(242,193,78,.6); color: var(--gold); }
+  /* The panel now has real content in it, so it has to be able to scroll on a
+     short screen rather than pushing Done off the bottom. */
+  #performance { max-height: calc(100vh - 40px); overflow-y: auto; }
 
   /* ---------- touch controls ---------- */
   #touch { position: fixed; inset: 0; z-index: 8; display: none; touch-action: none; }
@@ -299,7 +316,7 @@
     <div class="row"><span>Plane boost / airbrake</span><kbd>Shift</kbd> / <kbd>Space</kbd></div>
     <div class="row"><span>Helicopter up / down</span><kbd>Space</kbd> / <kbd>C</kbd></div>
     <div class="row"><span>Controls</span><kbd>F1</kbd></div>
-    <div class="row"><span>Performance</span><kbd>F2</kbd></div>
+    <div class="row"><span>Settings</span><kbd>F2</kbd></div>
     <div class="row"><span>Cycle weather</span><kbd>T</kbd></div>
     <div class="row"><span>Pause</span><kbd>Esc</kbd></div>
   </div>
@@ -311,8 +328,8 @@
 </div>
 
 <div id="performance" class="panel">
-  <h2>Performance</h2>
-  <p class="perf-lead">The game targets a 10 ms frame budget for 100 FPS. Your display still sets the maximum visible refresh rate.</p>
+  <h2>Settings</h2>
+  <p class="perf-lead">Audio, controls and accessibility options are stored on this device. The graphics budget targets a 10&nbsp;ms frame for 100&nbsp;FPS; your display still sets the maximum visible refresh rate.</p>
   <div id="perfStatus">Measuring frame rate&hellip;</div>
   <span class="perf-label">Graphics budget</span>
   <div class="perf-options">
@@ -322,6 +339,25 @@
     <button type="button" data-quality="high">High</button>
   </div>
   <label class="perf-row" for="perfStats"><span>Show live meter in the HUD</span><input id="perfStats" type="checkbox"></label>
+
+  <span class="perf-label">Audio</span>
+  <label class="set-row" for="setMuted"><span>Mute everything</span><input id="setMuted" type="checkbox"></label>
+  <label class="set-slider" for="setVolMaster"><span>Master<b id="setVolMasterVal">85%</b></span>
+    <input id="setVolMaster" type="range" min="0" max="100" step="1" value="85"></label>
+  <label class="set-slider" for="setVolEffects"><span>Effects<b id="setVolEffectsVal">100%</b></span>
+    <input id="setVolEffects" type="range" min="0" max="100" step="1" value="100"></label>
+  <label class="set-slider" for="setVolMusic"><span>Radio<b id="setVolMusicVal">30%</b></span>
+    <input id="setVolMusic" type="range" min="0" max="100" step="1" value="30"></label>
+
+  <span class="perf-label">Controls &amp; accessibility</span>
+  <label class="set-slider" for="setLookSpeed"><span>Look speed<b id="setLookSpeedVal">1.00&times;</b></span>
+    <input id="setLookSpeed" type="range" min="25" max="300" step="5" value="100"></label>
+  <label class="set-row" for="setInvertY"><span>Invert vertical look</span><input id="setInvertY" type="checkbox"></label>
+  <label class="set-row" for="setReduceMotion"><span>Reduce motion<i>Turns off camera shake and motion blur</i></span><input id="setReduceMotion" type="checkbox"></label>
+  <label class="set-slider" for="setHudScale"><span>HUD size<b id="setHudScaleVal">100%</b></span>
+    <input id="setHudScale" type="range" min="75" max="140" step="5" value="100"></label>
+
+  <button id="setReset" type="button">Reset to defaults</button>
   <button id="perfClose" type="button">Done</button>
 </div>
 
@@ -330,53 +366,101 @@
   <div class="sub">Free roam &middot; West Coast</div>
   <div id="bar"><div id="barFill"></div></div>
   <div id="bootMsg">Starting up</div>
-  <div class="boot-actions"><button id="continueBtn" type="button">Continue</button><button id="startBtn">Enter the city</button><button id="perfBtn" type="button">Performance</button></div>
+  <div class="boot-actions"><button id="continueBtn" type="button">Continue</button><button id="startBtn">Enter the city</button><button id="perfBtn" type="button">Settings</button></div>
   <div id="saveInfo"></div>
 </div>
 
+<button id="exploreButton" type="button" hidden>Explore <span>Tab</span></button>
+<div id="activityStatus" role="status" hidden></div>
+<section id="explorePanel" role="dialog" aria-modal="true" aria-labelledby="exploreTitle" hidden>
+  <header class="explore-head"><div><p class="explore-kicker">SUNSET BAY / COASTAL EXPANSION</p><h2 id="exploreTitle">Make the city yours.</h2></div><button id="exploreClose" type="button" aria-label="Close explore menu">Back to game</button></header>
+  <p class="explore-intro">Take a timed drive, find the new boardwalk, or watch the city light up from the lighthouse. Choose a destination to get directions.</p>
+  <div id="activityCards"></div>
+  <div class="world-controls"><div><h3>Set the mood</h3><p>The day continues from your chosen hour.</p></div><div class="world-buttons"><button data-hour="12.5" type="button">Clear day</button><button data-hour="17.6" type="button">Golden hour</button><button data-hour="22" type="button">City lights</button></div></div>
+  <footer class="explore-footer"><p id="saveState"></p><div><button id="cancelRun" type="button">Cancel time trial</button><button id="saveProgress" type="button">Save progress</button></div></footer>
+</section>
+<style>
+  [hidden] { display: none !important; }
+  #exploreButton { position: fixed; z-index: 12; bottom: max(22px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); background: #101f2bed; color: #f4e6ce; border: 1px solid #c79859; border-radius: 6px; padding: 12px 22px; font: 700 16px var(--ui); cursor: pointer; }
+  #exploreButton span { margin-left: 14px; opacity: .65; font-size: 14px; }
+  #activityStatus { position: fixed; z-index: 12; top: max(18px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); max-width: 44vw; background: #0b2029eb; color: #80eee0; border-top: 2px solid #4bd6d0; padding: 12px 18px; font: 600 16px var(--ui); text-align: center; pointer-events: none; }
+  #explorePanel { position: fixed; z-index: 65; inset: 0; overflow: auto; overscroll-behavior: contain; touch-action: pan-y; padding: max(32px, env(safe-area-inset-top)) max(5vw, env(safe-area-inset-right)) max(28px, env(safe-area-inset-bottom)); color: #eef3f4; background: linear-gradient(125deg, #081c27, #101920 60%, #28201b); }
+  #explorePanel * { touch-action: pan-y; }
+  .explore-head, .explore-footer, .world-controls { display: flex; justify-content: space-between; align-items: center; gap: 24px; }
+  .explore-kicker { color: #73d9d1; letter-spacing: .12em; font-size: 14px; font-weight: 700; margin: 0 0 12px; }
+  #exploreTitle { font: 400 clamp(28px, 4vw, 52px)/1.1 var(--display); margin: 0; letter-spacing: -.025em; }
+  .explore-intro { color: #aebec5; font-size: 17px; max-width: 730px; line-height: 1.6; margin: 22px 0 28px; }
+  #activityCards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+  .activity-card { display: flex; flex-direction: column; align-items: flex-start; background: #142631; border: 1px solid #30424c; border-top: 3px solid var(--accent); border-radius: 6px; padding: 22px; min-width: 0; }
+  .activity-card h3 { font: 700 25px var(--ui); margin: 0 0 10px; color: #f0eee6; }
+  .activity-card p { font-size: 16px; color: #b5c3c9; line-height: 1.55; margin: 0 0 22px; flex: 1; }
+  #explorePanel button { border: 1px solid #6e858d; border-radius: 5px; color: #e6f3f1; background: #203843; min-height: 44px; padding: 10px 18px; font: 700 16px var(--ui); cursor: pointer; }
+  #explorePanel button:hover { border-color: #68e5d7; background: #284955; }
+  #explorePanel button:focus-visible, #exploreButton:focus-visible { outline: 3px solid #ffe0a1; outline-offset: 3px; }
+  #explorePanel button:disabled { opacity: .4; cursor: default; }
+  .activity-card button { color: var(--accent) !important; }
+  .world-controls { border-top: 1px solid #3e484d; padding-top: 24px; margin-top: 30px; }
+  .world-controls h3 { font: 700 22px var(--ui); margin: 0 0 6px; }
+  .world-controls p, .explore-footer p { color: #aebdc4; font-size: 14px; margin: 0; }
+  .world-buttons, .explore-footer > div { display: flex; flex-wrap: wrap; gap: 10px; }
+  .explore-footer { margin-top: 28px; padding-top: 22px; border-top: 1px solid #39444c; }
+  @media (max-width: 850px) { #activityCards { grid-template-columns: repeat(2, minmax(0, 1fr)); } .explore-head { align-items: flex-start; } #activityStatus { top: 80px; max-width: 46vw; font-size: 14px; padding: 8px 12px; } }
+  @media (max-width: 520px) { #activityCards { grid-template-columns: 1fr; } .explore-head, .world-controls, .explore-footer { align-items: flex-start; flex-direction: column; gap: 16px; } #explorePanel { padding: 24px 18px; } .explore-intro { font-size: 16px; } }
+</style>
 <pre id="err"></pre>
 
 
-<script src="vendor/three.min.js?v=1788700701139"></script>
-<script src="src/00-core.js?v=1788700701139"></script>
-<script src="src/01-textures.js?v=1788700701139"></script>
-<script src="src/02-layout.js?v=1788700701139"></script>
-<script src="src/03-world.js?v=1788700701139"></script>
-<script src="src/04-geom.js?v=1788700701139"></script>
-<script src="src/04b-terrain.js?v=1788700701139"></script>
-<script src="src/05-city.js?v=1788700701139"></script>
-<script src="src/06-sky.js?v=1788700701139"></script>
-<script src="src/07-vehicle.js?v=1788700701139"></script>
-<script src="src/08-props.js?v=1788700701139"></script>
-<script src="src/09-characters.js?v=1788700701139"></script>
-<script src="src/10-fx.js?v=1788700701139"></script>
-<script src="src/11-traffic.js?v=1788700701139"></script>
-<script src="src/12-player.js?v=1788700701139"></script>
-<script src="src/13-peds.js?v=1788700701139"></script>
-<script src="src/14-combat.js?v=1788700701139"></script>
-<script src="src/15-police.js?v=1788700701139"></script>
-<script src="src/16-interiors.js?v=1788700701139"></script>
-<script src="src/17-missions.js?v=1788700701139"></script>
-<script src="src/18-hud.js?v=1788700701139"></script>
-<script src="src/19-game.js?v=1788700701139"></script>
-<script src="src/20-startup.js?v=1788700701139"></script>
-<script src="src/21-audio.js?v=1788700701139"></script>
-<script src="src/22-post.js?v=1788700701139"></script>
-<script src="src/23-quality.js?v=1788700701139"></script>
-<script src="src/24-touch.js?v=1788700701139"></script>
-<script src="src/25-lights.js?v=1788700701139"></script>
-<script src="src/26-boats.js?v=1788700701139"></script>
-<script src="src/27-aircraft.js?v=1788700701139"></script>
-<script src="src/28-infrastructure.js?v=1788700701139"></script>
-<script src="src/29-weather.js?v=1788700701139"></script>
-<script src="src/30-freeway.js?v=1788700701139"></script>
-<script src="src/31-rail.js?v=1788700701139"></script>
-<script src="src/32-rooftops.js?v=1788700701139"></script>
-<script src="src/33-progress.js?v=1788700701139"></script>
-<script src="src/34-save.js?v=1788700701139"></script>
-<script src="src/35-garage.js?v=1788700701139"></script>
-<script src="src/36-rhythm.js?v=1788700701139"></script>
-<script src="src/37-camera.js?v=1788700701139"></script>
+<script src="vendor/three.min.js?v=82f3c94ff2b6"></script>
+<script src="src/00-core.js?v=82f3c94ff2b6"></script>
+<script src="src/01-textures.js?v=82f3c94ff2b6"></script>
+<script src="src/02-layout.js?v=82f3c94ff2b6"></script>
+<script src="src/02b-islands.js?v=82f3c94ff2b6"></script>
+<script src="src/03-world.js?v=82f3c94ff2b6"></script>
+<script src="src/04-geom.js?v=82f3c94ff2b6"></script>
+<script src="src/04b-terrain.js?v=82f3c94ff2b6"></script>
+<script src="src/05-city.js?v=82f3c94ff2b6"></script>
+<script src="src/06-sky.js?v=82f3c94ff2b6"></script>
+<script src="src/07-vehicle.js?v=82f3c94ff2b6"></script>
+<script src="src/08-props.js?v=82f3c94ff2b6"></script>
+<script src="src/09-characters.js?v=82f3c94ff2b6"></script>
+<script src="src/10-fx.js?v=82f3c94ff2b6"></script>
+<script src="src/11-traffic.js?v=82f3c94ff2b6"></script>
+<script src="src/12-player.js?v=82f3c94ff2b6"></script>
+<script src="src/13-peds.js?v=82f3c94ff2b6"></script>
+<script src="src/14-combat.js?v=82f3c94ff2b6"></script>
+<script src="src/15-police.js?v=82f3c94ff2b6"></script>
+<script src="src/16-interiors.js?v=82f3c94ff2b6"></script>
+<script src="src/17-missions.js?v=82f3c94ff2b6"></script>
+<script src="src/18-hud.js?v=82f3c94ff2b6"></script>
+<script src="src/19-game.js?v=82f3c94ff2b6"></script>
+<script src="src/20-startup.js?v=82f3c94ff2b6"></script>
+<script src="src/21-audio.js?v=82f3c94ff2b6"></script>
+<script src="src/22-post.js?v=82f3c94ff2b6"></script>
+<script src="src/23-quality.js?v=82f3c94ff2b6"></script>
+<script src="src/24-touch.js?v=82f3c94ff2b6"></script>
+<script src="src/25-lights.js?v=82f3c94ff2b6"></script>
+<script src="src/26-boats.js?v=82f3c94ff2b6"></script>
+<script src="src/27-aircraft.js?v=82f3c94ff2b6"></script>
+<script src="src/28-infrastructure.js?v=82f3c94ff2b6"></script>
+<script src="src/29-weather.js?v=82f3c94ff2b6"></script>
+<script src="src/30-freeway.js?v=82f3c94ff2b6"></script>
+<script src="src/31-rail.js?v=82f3c94ff2b6"></script>
+<script src="src/32-rooftops.js?v=82f3c94ff2b6"></script>
+<script src="src/33-coast.js?v=82f3c94ff2b6"></script>
+<script src="src/33-progress.js?v=82f3c94ff2b6"></script>
+<script src="src/34-activities.js?v=82f3c94ff2b6"></script>
+<script src="src/34-save.js?v=82f3c94ff2b6"></script>
+<script src="src/35-garage.js?v=82f3c94ff2b6"></script>
+<script src="src/35-save.js?v=82f3c94ff2b6"></script>
+<script src="src/36-city-life.js?v=82f3c94ff2b6"></script>
+<script src="src/36-rhythm.js?v=82f3c94ff2b6"></script>
+<script src="src/37-camera.js?v=82f3c94ff2b6"></script>
+<script src="src/37-deliveries.js?v=82f3c94ff2b6"></script>
+<script src="src/38-pastimes.js?v=82f3c94ff2b6"></script>
+<script src="src/38-settings.js?v=82f3c94ff2b6"></script>
+<script src="src/39-fire.js?v=82f3c94ff2b6"></script>
+<script src="src/39-garage.js?v=82f3c94ff2b6"></script>
+<script src="src/40-neighbors.js?v=82f3c94ff2b6"></script>
 <script>
   (function () {
     window.addEventListener('error', function (e) {

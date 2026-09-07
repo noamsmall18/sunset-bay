@@ -47,10 +47,13 @@
     p.health = 100;
     p.dead = false;
     p.state = 'walk';
+    p.role = ['Commuter', 'Courier', 'Medic', 'Tourist', 'Vendor', 'Mechanic', 'Reporter'][this.rng.int(0, 6)];
+    p.conversations = 0; p.trafficWait = 0; p.followTarget = null; p.helped = false;
+    p.generation = (p.generation || 0) + 1;
     p.flee = 0;
     p.wait = 0;
     p.crossT = 0;
-    p.speedWant = WALK * this.rng.range(0.78, 1.30);
+    p.speedWant = WALK * this.rng.range(0.78, 1.30) * (p.role === 'Courier' ? 1.35 : p.role === 'Tourist' ? .8 : 1);
     return p;
   };
 
@@ -181,6 +184,23 @@
 
   Peds.prototype.stepPed = function (p, dt, px, pz) {
     var want = p.speedWant;
+    // Once a pedestrian reaches a crossing, look for approaching traffic.
+    // Query the existing traffic grid; never scan the city's entire fleet.
+    if (p.state === 'cross' || (p.followTarget && p.state !== 'flee')) {
+      p.trafficWait = Math.max(0, p.trafficWait - dt);
+      var tr = this.game.traffic;
+      if (tr && tr.grid) {
+        var nearby = tr.grid.queryPoint(p.x, p.z, 22, tr._q, tr._stamp++);
+        for (var vi = 0; vi < nearby.length; vi++) {
+          var car = nearby[vi], speed = car.speed();
+          var dx = p.x-car.pos.x, dz = p.z-car.pos.z;
+          var ahead = dx*Math.cos(car.yaw)+dz*Math.sin(car.yaw);
+          var lateral = Math.abs(-dx*Math.sin(car.yaw)+dz*Math.cos(car.yaw));
+          if (speed > 2 && ahead > 0 && ahead < speed*2.4+5 && lateral < 4) { p.trafficWait = .6; break; }
+        }
+      }
+      if (p.trafficWait > 0) { p.speed = 0; this.checkRunOver(p); return; }
+    }
     var tx, tz;
 
     if (p.state === 'flee') {
@@ -191,6 +211,9 @@
       var d = Math.hypot(dx, dz) || 1;
       tx = p.x + dx / d * 12;
       tz = p.z + dz / d * 12;
+    } else if (p.followTarget) {
+      tx = p.followTarget.x; tz = p.followTarget.z;
+      want = 2.9;
     } else if (p.state === 'cross') {
       tx = p.crossX; tz = p.crossZ;
       want = HURRY;
