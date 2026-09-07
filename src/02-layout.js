@@ -125,7 +125,24 @@
   // ---------------------------------------------------------- welding -----
   // Split every segment at every crossing, then merge coincident endpoints so
   // the separate polylines become one connected graph.
-  var WELD_EPS = 2.2;
+  //
+  // The weld radius used to be 2.2m, which is tight enough that two roads
+  // laid three metres apart - a downtown avenue and the arterial that runs
+  // beside it, a suburb loop clipping the grid it grew out of - stayed two
+  // separate roads with a strip of "block" between them narrower than a
+  // pavement. At street widths of 15 to 24m their carriageways physically
+  // overlapped, which is the smeared look the city had. Welding at 8m folds
+  // those into one junction: the same road, drawn once.
+  var WELD_EPS = 8.0;
+  // Two roads only weld if they are at the same height as well as the same
+  // place. A freeway deck welded to a street eight metres below it is not a
+  // junction: it drags the deck sideways, hands the street the deck's height,
+  // and leaves the ring visibly kinked where it passes over the grid. The gate
+  // is the height difference rather than the elevated flag, so the point where
+  // a ramp touches down - elevated on one side, a normal road on the other -
+  // still joins up, which is the whole reason ramps exist.
+  var WELD_DY = 6.0;        // two roads of the same kind, on a slope
+  var WELD_DY_MIXED = 1.5;  // a deck meeting the ground: the touchdown only
 
   function segIntersect(ax, az, bx, bz, cx, cz, dx, dz, out) {
     var r0 = bx - ax, r1 = bz - az;
@@ -189,16 +206,26 @@
     var nodes = [];
     var snap = new SB.Grid(WELD_EPS * 2);
     var sq = [], sstamp = 1;
-    function nodeAt(x, z, y) {
+    function nodeAt(x, z, y, air) {
+      var wantY = (y === null || y === undefined) ? terrainAt(x, z) : y;
       var found = snap.queryPoint(x, z, WELD_EPS, sq, sstamp++);
+      // Nearest wins, not first-found. At a 2m radius the difference was
+      // academic; at 8m, taking whichever candidate the grid happened to
+      // return first can drag a junction several metres off the road it
+      // belongs to, and every road meeting there bends with it.
+      var best = null, bestD = WELD_EPS * WELD_EPS;
       for (var k = 0; k < found.length; k++) {
         var n = found[k];
-        if (M.dist2(n.x, n.z, x, z) <= WELD_EPS * WELD_EPS) {
-          if (y !== null && y !== undefined) n.y = Math.max(n.y, y);
-          return n;
-        }
+        var lim = (n.air === !!air) ? WELD_DY : WELD_DY_MIXED;
+        if (Math.abs(n.y - wantY) > lim) continue;
+        var d2 = M.dist2(n.x, n.z, x, z);
+        if (d2 <= bestD) { bestD = d2; best = n; }
       }
-      var nn = { id: nodes.length, x: x, z: z, y: y === null || y === undefined ? terrainAt(x, z) : y, edges: [] };
+      if (best) {
+        if (y !== null && y !== undefined) best.y = Math.max(best.y, y);
+        return best;
+      }
+      var nn = { id: nodes.length, x: x, z: z, y: wantY, air: !!air, edges: [] };
       nodes.push(nn);
       snap.insert(nn, x, z, x, z);
       return nn;
@@ -231,19 +258,259 @@
     for (s = 0; s < segs.length; s++) {
       var sg2 = segs[s];
       sg2.cuts.sort(function (m, n) { return m.t - n.t; });
-      var prev = nodeAt(sg2.ax, sg2.az, sg2.ay);
+      var air = sg2.path.elevated;
+      var prev = nodeAt(sg2.ax, sg2.az, sg2.ay, air);
       for (var c = 0; c < sg2.cuts.length; c++) {
         var cut = sg2.cuts[c];
         var cy = sg2.ay === null ? null : M.lerp(sg2.ay, sg2.by, cut.t);
-        var nd = nodeAt(cut.x, cut.z, cy);
+        var nd = nodeAt(cut.x, cut.z, cy, air);
         addEdge(prev, nd, sg2.path);
         prev = nd;
       }
-      addEdge(prev, nodeAt(sg2.bx, sg2.bz, sg2.by), sg2.path);
+      addEdge(prev, nodeAt(sg2.bx, sg2.bz, sg2.by, air), sg2.path);
     }
 
     this.nodes = nodes;
     this.edges = edges;
+    return this;
+  };
+
+  // ------------------------------------------------------------- tidy -----
+  // Welding fixes roads that share a junction. It cannot fix two roads that
+  // never meet but run down the same street a few metres apart, because
+  // nothing in the generator knows that the arterial it just drew is on top
+  // of a grid street laid by a different pass. Those pairs are what made the
+  // map look smeared: two carriageways of tarmac where the city has one
+  // street, with a leftover strip between them extracted as a "block" too
+  // thin to hold a pavement.
+  //
+  // The unit of work here is a whole street, not a segment. Deleting single
+  // overlapping segments is tempting and looks fine in the numbers, but it
+  // punches a hole in the middle of a road and leaves the two halves either
+  // side of the gap - visibly broken tarmac that traffic drives around. A
+  // street is either redundant along its whole run or it stays.
+  var PARALLEL_COS = 0.985;   // ~10 degrees
+  var OVERLAP_FRAC = 0.55;    // most of the run has to be redundant
+  var STUB_LEN = 30;          // a dead end shorter than this is debris
+
+  // Higher is more worth keeping. Kind first - a freeway outranks everything,
+  // and a multi-lane avenue outranks a street however long the street is -
+  // then width, then length as the tie-break.
+  function edgeRank(e) {
+    var kind = e.kind === 'freeway' ? 4000 : e.kind === 'ramp' ? 3000 :
+      (e.lanes > 1 ? 2000 : 1000);
+    return kind + e.width * 10 + Math.min(e.len, 400) * 0.1;
+  }
+
+  // Break the graph into streets: maximal runs of edges joined end to end
+  // through nodes that do nothing but continue the road. The ends of a chain
+  // are junctions or dead ends, which is exactly the granularity at which
+  // removing a road still leaves a coherent map.
+  function chainsOf(nodes, edges, alive) {
+    function degree(n) {
+      var d = 0;
+      for (var k = 0; k < n.edges.length; k++) if (alive[n.edges[k]]) d++;
+      return d;
+    }
+    var used = new Uint8Array(edges.length);
+    var chains = [];
+    var i, k;
+    for (i = 0; i < nodes.length; i++) {
+      var start = nodes[i];
+      if (degree(start) === 2) continue;              // mid-street, not an end
+      for (k = 0; k < start.edges.length; k++) {
+        var first = start.edges[k];
+        if (!alive[first] || used[first]) continue;
+        var ids = [first];
+        used[first] = 1;
+        var e = edges[first];
+        var at = e.a === start.id ? e.b : e.a;
+        var len = e.len;
+        var guard = 0;
+        while (degree(nodes[at]) === 2 && guard++ < 500) {
+          var nxt = -1;
+          for (var j = 0; j < nodes[at].edges.length; j++) {
+            var cand = nodes[at].edges[j];
+            if (alive[cand] && cand !== ids[ids.length - 1]) { nxt = cand; break; }
+          }
+          if (nxt < 0 || used[nxt]) break;
+          used[nxt] = 1;
+          ids.push(nxt);
+          len += edges[nxt].len;
+          var en = edges[nxt];
+          at = en.a === at ? en.b : en.a;
+        }
+        chains.push({ ids: ids, a: start.id, b: at, len: len });
+      }
+    }
+    return chains;
+  }
+
+  RoadNet.prototype.tidy = function () {
+    var nodes = this.nodes, edges = this.edges;
+    var i, j, k;
+
+    var alive = new Uint8Array(edges.length);
+    for (i = 0; i < edges.length; i++) alive[i] = 1;
+
+    // Bounded reachability, used as a bridge test: if the far end of a street
+    // is still reachable without it, the street is not the only thing holding
+    // two halves of the map together and it is safe to drop. The bound makes a
+    // failed search mean "could not prove it safe", so the road stays - the
+    // pass errs toward leaving tarmac in rather than stranding a district.
+    var mark = new Int32Array(nodes.length);
+    var stamp = 0;
+    var queue = new Int32Array(nodes.length);
+    function reaches(from, to, skip) {
+      if (from === to) return true;
+      stamp++;
+      var head = 0, tail = 0, visited = 0;
+      queue[tail++] = from; mark[from] = stamp;
+      while (head < tail && visited++ < 1200) {
+        var cur = queue[head++];
+        var nd = nodes[cur];
+        for (var m = 0; m < nd.edges.length; m++) {
+          var id = nd.edges[m];
+          if (!alive[id] || skip[id]) continue;
+          var e = edges[id];
+          var other = e.a === cur ? e.b : e.a;
+          if (mark[other] === stamp) continue;
+          if (other === to) return true;
+          mark[other] = stamp;
+          queue[tail++] = other;
+        }
+      }
+      return false;
+    }
+
+    // ---- how much of each edge is buried under another road
+    var grid = new SB.Grid(60);
+    for (i = 0; i < edges.length; i++) {
+      var e0 = edges[i], a0 = nodes[e0.a], b0 = nodes[e0.b];
+      grid.insert(e0,
+        Math.min(a0.x, b0.x), Math.min(a0.z, b0.z),
+        Math.max(a0.x, b0.x), Math.max(a0.z, b0.z));
+    }
+
+    // For each edge: the id of the best road it duplicates, or -1.
+    var coveredBy = new Int32Array(edges.length);
+    var q = [], gs = 1;
+    for (i = 0; i < edges.length; i++) {
+      coveredBy[i] = -1;
+      var A = edges[i];
+      if (A.elevated) continue;                 // a flyover belongs up there
+      var an = nodes[A.a], bn = nodes[A.b];
+      var near = grid.query(
+        Math.min(an.x, bn.x) - 30, Math.min(an.z, bn.z) - 30,
+        Math.max(an.x, bn.x) + 30, Math.max(an.z, bn.z) + 30, q, gs++);
+      var bestRank = -1;
+      for (j = 0; j < near.length; j++) {
+        var B = near[j];
+        if (B.id === A.id || B.elevated) continue;
+        // Sharing a node makes them a junction, not a duplicate.
+        if (A.a === B.a || A.a === B.b || A.b === B.a || A.b === B.b) continue;
+        var cn = nodes[B.a], dn = nodes[B.b];
+        var cos = Math.abs(Math.cos(
+          Math.atan2(bn.z - an.z, bn.x - an.x) -
+          Math.atan2(dn.z - cn.z, dn.x - cn.x)));
+        if (cos < PARALLEL_COS) continue;
+        // Distance from A's midpoint to B's centreline. Using the midpoint
+        // catches a short street sitting alongside a long one without also
+        // catching two streets that merely point the same way a block apart.
+        var mx = (an.x + bn.x) * 0.5, mz = (an.z + bn.z) * 0.5;
+        var dx = dn.x - cn.x, dz = dn.z - cn.z;
+        var len2 = dx * dx + dz * dz;
+        if (len2 < 1e-6) continue;
+        var t = M.clamp(((mx - cn.x) * dx + (mz - cn.z) * dz) / len2, 0, 1);
+        if (M.dist(cn.x + dx * t, cn.z + dz * t, mx, mz) >= (A.width + B.width) * 0.5) continue;
+        var r = edgeRank(B);
+        if (r > bestRank) { bestRank = r; coveredBy[i] = B.id; }
+      }
+    }
+
+    // ---- 1. drop whole streets that duplicate a better one
+    var chains = chainsOf(nodes, edges, alive);
+    var cand = [];
+    for (i = 0; i < chains.length; i++) {
+      var ch = chains[i];
+      var covered = 0, rank = 0, blocked = false;
+      for (k = 0; k < ch.ids.length; k++) {
+        var ce = edges[ch.ids[k]];
+        // The freeway and its ramps are the skeleton of the map; the elevated
+        // deck genuinely does run above other roads.
+        if (ce.elevated || ce.kind === 'freeway' || ce.kind === 'ramp') { blocked = true; break; }
+        rank = Math.max(rank, edgeRank(ce));
+        var cover = coveredBy[ch.ids[k]];
+        // Only redundant against a road that is at least as important, and
+        // that is not part of this same street.
+        if (cover >= 0 && edgeRank(edges[cover]) >= edgeRank(ce) &&
+            ch.ids.indexOf(cover) < 0) covered += ce.len;
+      }
+      if (blocked || ch.len <= 0) continue;
+      if (covered / ch.len < OVERLAP_FRAC) continue;
+      cand.push({ ch: ch, rank: rank, frac: covered / ch.len });
+    }
+    // Weakest first, so a lane that duplicates three roads is considered
+    // before the avenue it duplicates, and the avenue survives.
+    cand.sort(function (m, n) { return (m.rank - n.rank) || (n.frac - m.frac); });
+
+    var skip = new Uint8Array(edges.length);
+    var droppedStreets = 0, droppedLen = 0;
+    for (i = 0; i < cand.length; i++) {
+      var c2 = cand[i].ch;
+      var stillLive = false;
+      for (k = 0; k < c2.ids.length; k++) if (alive[c2.ids[k]]) stillLive = true;
+      if (!stillLive) continue;
+      for (k = 0; k < c2.ids.length; k++) skip[c2.ids[k]] = 1;
+      var safe = reaches(c2.a, c2.b, skip);
+      if (safe) {
+        for (k = 0; k < c2.ids.length; k++) { alive[c2.ids[k]] = 0; droppedLen += edges[c2.ids[k]].len; }
+        droppedStreets++;
+      }
+      for (k = 0; k < c2.ids.length; k++) skip[c2.ids[k]] = 0;
+    }
+
+    // ---- 2. dead-end debris
+    // A road that stops after twenty metres is not a cul-de-sac, it is the
+    // tail of a curve clipped by a reserved zone or the map edge. Long dead
+    // ends are left alone: suburbs are supposed to have them.
+    var trimmed = 0;
+    for (var pass = 0; pass < 4; pass++) {
+      var again = false;
+      var live = chainsOf(nodes, edges, alive);
+      for (i = 0; i < live.length; i++) {
+        var st = live[i];
+        if (st.len > STUB_LEN) continue;
+        var degA = 0, degB = 0, hard = false;
+        for (k = 0; k < nodes[st.a].edges.length; k++) if (alive[nodes[st.a].edges[k]]) degA++;
+        for (k = 0; k < nodes[st.b].edges.length; k++) if (alive[nodes[st.b].edges[k]]) degB++;
+        if (degA !== 1 && degB !== 1) continue;        // not a dead end
+        for (k = 0; k < st.ids.length; k++) {
+          var te = edges[st.ids[k]];
+          if (te.elevated || te.kind === 'freeway' || te.kind === 'ramp') hard = true;
+        }
+        if (hard) continue;
+        for (k = 0; k < st.ids.length; k++) alive[st.ids[k]] = 0;
+        trimmed++; again = true;
+      }
+      if (!again) break;
+    }
+
+    // ---- 3. rebuild
+    var kept = [];
+    for (i = 0; i < nodes.length; i++) nodes[i].edges = [];
+    for (i = 0; i < edges.length; i++) {
+      if (!alive[i]) continue;
+      var k2 = edges[i];
+      k2.id = kept.length;
+      nodes[k2.a].edges.push(k2.id);
+      nodes[k2.b].edges.push(k2.id);
+      kept.push(k2);
+    }
+    this.edges = kept;
+    this.tidied = {
+      streets: droppedStreets, metres: Math.round(droppedLen), stubs: trimmed
+    };
     return this;
   };
 
@@ -503,8 +770,21 @@
   // but bend, and diagonals cutting across - so nothing stays parallel.
   function layDowntown(net, rng) {
     var R0 = 62, RINGS = 8, ringGap = 52;
+    var HUB = 46;              // the circus at the centre
     var rej = notIn('downtown');
     var r, k;
+
+    // Every radial plan has to answer the question of what happens where the
+    // spokes meet, and the answer is never "they all cross at a point". Seven
+    // avenues converging inside a 70m circle was a knot of tarmac with no
+    // block big enough to build on. A circus at the centre gives them
+    // somewhere to arrive: the spokes terminate on the ring, the ring carries
+    // the turning movements, and the middle becomes one plaza-sized block
+    // instead of a dozen slivers.
+    net.addCurve(function (t) {
+      var a = t * Math.PI * 2;
+      return { x: Math.cos(a) * HUB, z: Math.sin(a) * HUB * 0.92 };
+    }, 36, { width: AVENUE_W, lanes: 2 }, rej);
     for (r = 0; r < RINGS; r++) {
       var rad = R0 + r * ringGap;
       var wob = ringGap * rng.range(0.13, 0.26);
@@ -521,7 +801,9 @@
       var base = (k / spokes) * Math.PI * 2 + rng() * 0.10;
       var bend = (rng() - 0.5) * 0.55;
       var major = k % 4 === 0;
-      var inner = (k % 2 === 0) ? 34 : R0 + ringGap * 1.6;
+      // Only every third spoke runs all the way in. The rest start out at the
+      // third ring, so the inner two rings are streets rather than a starburst.
+      var inner = (k % 3 === 0) ? HUB : R0 + ringGap * 1.6;
       var outer = R0 + RINGS * ringGap + 30;
       net.addCurve(function (t) {
         var rr = M.lerp(inner, outer, t);
@@ -934,6 +1216,7 @@
     var ramps = layFreeway(net, rng);
 
     net.weld();
+    net.tidy();
     net.prune();
     var faces = net.faces();
 

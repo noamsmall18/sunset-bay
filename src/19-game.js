@@ -755,6 +755,80 @@
       if (brokenLinks) issues.push('routing returned ' + brokenLinks + ' paths with a non-existent hop');
       if (suboptimal) issues.push('routing returned ' + suboptimal + ' paths that are not cost-optimal');
 
+      // ---- road network: one map, drawn once -------------------------------
+      // Three properties that used to be false. The graph has to be a single
+      // component, or a district is unreachable and anything spawned there is
+      // stranded. Ground roads must not be buried under other ground roads -
+      // two carriageways occupying the same tarmac is what made the map look
+      // smeared, and it was true of 38% of the edges. And the blocks left
+      // between the roads have to be real ground rather than slivers: the
+      // isoperimetric ratio catches a long thin scrap that no pavement fits on.
+      var seenN = new Uint8Array(L.nodes.length);
+      var stackN = [0], reachedN = 1;
+      seenN[0] = 1;
+      while (stackN.length) {
+        var curN = stackN.pop();
+        var ndN = L.nodes[curN];
+        for (var eN = 0; eN < ndN.edges.length; eN++) {
+          var edN = L.edges[ndN.edges[eN]];
+          var othN = edN.a === curN ? edN.b : edN.a;
+          if (!seenN[othN]) { seenN[othN] = 1; reachedN++; stackN.push(othN); }
+        }
+      }
+      if (reachedN !== L.nodes.length) {
+        issues.push('road graph is in pieces: ' + reachedN + ' of ' + L.nodes.length + ' nodes reachable');
+      }
+
+      var buriedE = 0, groundE = 0, rq = [], rs = 1;
+      for (var bi2 = 0; bi2 < L.edges.length; bi2++) {
+        var EA = L.edges[bi2];
+        if (EA.elevated) continue;
+        groundE++;
+        var ea0 = L.nodes[EA.a], eb0 = L.nodes[EA.b];
+        var nearE = L.edgeGrid.query(
+          Math.min(ea0.x, eb0.x) - 30, Math.min(ea0.z, eb0.z) - 30,
+          Math.max(ea0.x, eb0.x) + 30, Math.max(ea0.z, eb0.z) + 30, rq, rs++);
+        for (var nj = 0; nj < nearE.length; nj++) {
+          var EB = nearE[nj];
+          if (EB.id === EA.id || EB.elevated) continue;
+          if (EA.a === EB.a || EA.a === EB.b || EA.b === EB.a || EA.b === EB.b) continue;
+          var ec0 = L.nodes[EB.a], ed0 = L.nodes[EB.b];
+          var cosE = Math.abs(Math.cos(
+            Math.atan2(eb0.z - ea0.z, eb0.x - ea0.x) -
+            Math.atan2(ed0.z - ec0.z, ed0.x - ec0.x)));
+          if (cosE < 0.985) continue;
+          var emx = (ea0.x + eb0.x) * 0.5, emz = (ea0.z + eb0.z) * 0.5;
+          var edx = ed0.x - ec0.x, edz = ed0.z - ec0.z;
+          var el2 = edx * edx + edz * edz;
+          if (el2 < 1e-6) continue;
+          var et = SB.M.clamp(((emx - ec0.x) * edx + (emz - ec0.z) * edz) / el2, 0, 1);
+          if (SB.M.dist(ec0.x + edx * et, ec0.z + edz * et, emx, emz) <
+              (EA.width + EB.width) * 0.5) { buriedE++; break; }
+        }
+      }
+      if (groundE && buriedE / groundE > 0.20) {
+        issues.push('road network: ' + Math.round(100 * buriedE / groundE) +
+          '% of ground roads are buried under another road');
+      }
+
+      var sliverB = 0;
+      for (var sb = 0; sb < L.blocks.length; sb++) {
+        var spoly = L.blocks[sb].kerbPoly || L.blocks[sb].poly;
+        if (!spoly || spoly.length < 3) continue;
+        var s2 = 0, sper = 0;
+        for (var sk = 0; sk < spoly.length; sk++) {
+          var sp = spoly[sk], sq2 = spoly[(sk + 1) % spoly.length];
+          s2 += sp.x * sq2.z - sq2.x * sp.z;
+          sper += SB.M.dist(sp.x, sp.z, sq2.x, sq2.z);
+        }
+        var sarea = Math.abs(s2) * 0.5;
+        if (sper > 0 && (4 * Math.PI * sarea) / (sper * sper) < 0.12) sliverB++;
+      }
+      if (L.blocks.length && sliverB / L.blocks.length > 0.14) {
+        issues.push('road network: ' + Math.round(100 * sliverB / L.blocks.length) +
+          '% of blocks are slivers');
+      }
+
       // ---- contracts: every generated job must be runnable -----------------
       if (this.missions && this.progress && SB.Missions.CONTRACT_TYPES) {
         var savedXp = this.progress.xp, savedUnlocked = this.progress.unlocked;
@@ -995,7 +1069,7 @@
         ' building doors, ' + this.interiors.rooms.length + ' unique furnished interiors, ' +
         generatedRooms + ' generated variants, ' + hotspotTotal + ' interior hotspots, ' +
         'multi-level/bank/vehicle/car-stability/boat/plane/heli/routing/contract/' +
-        'garage/damage/rhythm/camera/settings/save probes clean)');
+        'garage/damage/rhythm/camera/settings/save/road-network probes clean)');
     }
     this.selfTestIssues = issues;
   };
