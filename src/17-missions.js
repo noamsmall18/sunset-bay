@@ -367,6 +367,57 @@
         { type: 'wait', seconds: 2, text: 'Catch your breath' }
       ]
     },
+    // ---- the offshore chain ------------------------------------------------
+    // Three missions that exist to take you off the mainland: one over the
+    // causeway, one out to the light, one to the island nobody goes to. Their
+    // coordinates are the islands' own - the key's loop road, Gull Rock's
+    // jetty, the yard inside Mercy Point's wall - so if the islands move, the
+    // missions are wrong in the obvious, findable way rather than quietly
+    // pointing at open water.
+    {
+      id: 'the-causeway', name: 'The Causeway',
+      giver: { x: -900, z: -140 },
+      brief: 'They finished the causeway to Pelican Key last spring. Somebody out there has been ' +
+        'skimming off the top and thinks the water is far enough. Go and disagree.',
+      reward: 7400,
+      stages: [
+        { type: 'car', text: 'Get a car' },
+        { type: 'drive', x: -1161, z: -180, r: 14, text: 'Cross to Pelican Key', keepCar: true },
+        { type: 'drive', x: -1424, z: -137, r: 14, text: 'Far side of the key', keepCar: true },
+        { type: 'ambush', count: 4, tag: 'key', spread: 13, text: 'They were expecting somebody else' },
+        { type: 'drive', x: -900, z: -140, r: 12, text: 'Back over the causeway' }
+      ]
+    },
+    {
+      id: 'gull-rock-light', name: 'Gull Rock',
+      giver: { x: -900, z: 300 },
+      brief: 'There is a package under the light on Gull Rock and a coastguard cutter due at eleven. ' +
+        'Take a boat. Do not take the long way.',
+      reward: 9200, time: 300,
+      stages: [
+        { type: 'boat', text: 'Get on the water' },
+        { type: 'sail', x: -1330, z: 852, r: 20, text: 'Tie up at Gull Rock' },
+        { type: 'goto', x: -1330, z: 776, r: 16, text: 'Climb to the light' },
+        { type: 'pickup', x: -1330, z: 776, r: 6, text: 'Take the package' },
+        { type: 'sail', x: -1120, z: 320, r: 26, text: 'Back to the mainland' }
+      ]
+    },
+    {
+      id: 'mercy-point', name: 'Mercy Point',
+      giver: { x: -900, z: 420 },
+      brief: 'Mercy Point Correctional closed in 1974 and somebody has been paying the power bill ever ' +
+        'since. Whatever is in that yard, it comes back with you.',
+      reward: 16500,
+      stages: [
+        { type: 'boat', text: 'Take a boat out' },
+        { type: 'sail', x: -1585, z: 70, r: 24, text: 'Come in on the north shore' },
+        { type: 'goto', x: -1585, z: 322, r: 18, text: 'Through the gate' },
+        { type: 'ambush', count: 5, tag: 'mercy', spread: 17, text: 'Clear the yard' },
+        { type: 'pickup', x: -1585, z: 386, r: 6, text: 'Whatever they were guarding' },
+        { type: 'heat', stars: 3, text: 'Somebody called it in' },
+        { type: 'sail', x: -1120, z: 380, r: 26, text: 'Get it back to the mainland' }
+      ]
+    },
     {
       id: 'sunset-run', name: 'Sunset Run',
       giver: { x: -344, z: -14 },

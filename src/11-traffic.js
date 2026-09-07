@@ -188,6 +188,10 @@
     // the kerb wins over traffic sliding past.
     var out = this.parked.concat(this.loose, this.active);
     if (this.game.police) out = out.concat(this.game.police.cars);
+    // Fire engines live in the fire service's own list for the same reason
+    // police cars do - they are driven by a system, not by traffic AI - but
+    // they are still cars on the road you can walk up to and get into.
+    if (this.game.fires) out = out.concat(this.game.fires.vehicles());
     return out;
   };
 
@@ -286,6 +290,7 @@
     // read undefined car values and poison every nearby position with NaN.
     var all = this.parked.concat(this.loose, this.active);
     if (this.game.police) all = all.concat(this.game.police.cars);
+    if (this.game.fires) all = all.concat(this.game.fires.vehicles());
     all = all.filter(isRoadVehicle);
     var pv = this.game.player && this.game.player.vehicle;
     if (isRoadVehicle(pv) && all.indexOf(pv) < 0) all.push(pv);
@@ -671,6 +676,9 @@
       if (pd < 9) this.game.player.takeDamage((9 - pd) * 11, 'blast');
     }
     if (this.game.peds) this.game.peds.scare(v.pos.x, v.pos.z, 40);
+    // A car going up starts a fire where it stood. The fire service hears
+    // about it the same way it hears about anything else.
+    if (this.game.fires) this.game.fires.ignite(v.pos.x, v.pos.z, { kind: 'wreck', r: 4.2, fuel: 34 });
   };
 
   // Player on foot being hit by a moving car.

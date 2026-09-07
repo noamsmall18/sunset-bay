@@ -21,7 +21,10 @@
   // ------------------------------------------------------- height field ----
   function HeightField(L) {
     var B = L.bounds;
-    this.minX = B.minX - PAD;
+    // The field has to reach past the mainland far enough to hold the
+    // offshore islands, or they would be terrain the ground mesh never
+    // covers - visible as nothing at all.
+    this.minX = Math.min(B.minX - PAD, (L.seaMinX === undefined ? B.minX : L.seaMinX) - 60);
     this.minZ = B.minZ - PAD;
     this.nx = Math.ceil((B.maxX + PAD - this.minX) / CELL) + 1;
     this.nz = Math.ceil((B.maxZ + PAD - this.minZ) / CELL) + 1;
@@ -33,6 +36,11 @@
 
   HeightField.prototype.baseAt = function (x, z) {
     if (x < this.beachX) {
+      // Out here the ground is seabed - unless an island is standing on it.
+      if (SB.Islands) {
+        var isle = SB.Islands.heightAt(x, z);
+        if (isle !== null) return isle;
+      }
       // the shore shelves under the water instead of dropping off a cliff
       var t = M.clamp((this.beachX - x) / 110, 0, 1);
       return -t * t * 7.5;
@@ -178,8 +186,28 @@
             // ground cover follows the land: sand at the shore, grass inland,
             // dry scrub and bare rock as the slope and the altitude climb
             var slope = 1 - n.y;
-            if (x < field.beachX + 46) c.copy(sand);
-            else if (field.road[j * field.nx + i]) c.copy(road);
+            // An island is land, not shore: colouring by x alone would paint
+            // every one of them uniformly sand out to its highest point.
+            var offshoreLand = SB.Islands && x < field.beachX && SB.Islands.near(x, z, 40);
+            if (field.road[j * field.nx + i]) c.copy(road);
+            else if (offshoreLand) {
+              // sand at the waterline, then the island's own cover
+              var nz3 = vnoise(x / 150, z / 150);
+              c.copy(straw).lerp(scrub, M.clamp(nz3 * 1.4 - 0.2, 0, 1));
+              c.lerp(rock, M.clamp((slope - 0.16) / 0.40, 0, 0.80));
+              c.lerp(rock, M.clamp((y - 16) / 30, 0, 0.55));
+              c.lerp(sand, M.clamp((3.4 - y) / 3.6, 0, 1));
+            }
+            else if (y < -1.4) {
+              // Seabed. It was painted the same sand as the dry beach, which
+              // was invisible while the only way to see it was to look down
+              // through the water at the shore. From a boat out past the
+              // islands you look across it, so it darkens and greys with
+              // depth the way a real bottom does.
+              var deep = M.clamp((-1.4 - y) / 6.5, 0, 1);
+              c.copy(sand).lerp(new THREE.Color(0x4d5a55), deep * 0.85);
+            }
+            else if (x < field.beachX + 46) c.copy(sand);
             else {
               // two octaves of drift between straw and scrub, with damper
               // hollows going olive and exposed slopes going to bare rock

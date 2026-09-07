@@ -158,8 +158,12 @@
     // delta is consumed exactly once.
     if (input.locked || input.touch.enabled) {
       var ld = input.lookDelta(this._look);
-      f.yaw = M.wrapAngle(f.yaw + ld.x * 0.0021);
-      f.pitch = M.clamp(f.pitch - ld.y * 0.0021, -1.5, 1.5);
+      // Same sensitivity and inversion the player camera uses, so photo mode
+      // does not feel like a different game.
+      var sens = 0.0021 * (SB.Settings ? SB.Settings.lookScale() : 1);
+      var invert = SB.Settings ? SB.Settings.lookInvertY() : 1;
+      f.yaw = M.wrapAngle(f.yaw + ld.x * sens);
+      f.pitch = M.clamp(f.pitch - ld.y * sens * invert, -1.5, 1.5);
     }
 
     function held(list) {

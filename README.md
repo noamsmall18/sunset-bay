@@ -5,6 +5,40 @@ procedural, with a small authored photo set layered into the title card and
 rooftop billboards across the map. Procedural fallbacks keep the core game
 playable if the optional `assets/` folder is unavailable.
 
+## Coastal expansion
+
+Open **Explore** (`Tab` on desktop, `GO` on touch) to select an activity or destination.
+
+- **Sunset Boardwalk:** a new 150 × 110 m pier square, connected to the shore by a drivable approach, with food stalls, illuminated railings, festoon lights, an animated observation wheel and coastal birds.
+- **Lighthouse lookout:** take the lift with `E` (the context action on touch) to the balcony and return the same way.
+- **Night skyline:** batched illuminated tower outlines, a rotating lighthouse beam and a crescent moon. Start at golden hour or choose clear day / golden hour / city lights in Explore.
+- **Four time trials:** Coastline Run, City Lights, Summit Chase and The Grand Tour. Routes follow the generated road graph, with sequential checkpoints, a countdown, medals, cash rewards and personal bests. Select a route, drive to the ring in a car and stop to start. The timer runs until the finish; leaving the car, dying, being arrested or beginning a story mission stops the run.
+- **Five speed zones:** passing a camera at 50 km/h or faster records a speed; a new personal best pays $150. The camera has a cooldown.
+- **Discovery rewards:** visit the boardwalk and lighthouse for a first-visit reward.
+- **Device-local saves:** money, armor, weapons/ammo, completed story progress, race records, discoveries and collected interior loot persist in this browser. Autosaves run every 30 seconds and after rewards; Explore also has Save progress. Reload returns to the safe starting area; unfinished missions and races restart from the beginning. Debug sessions do not read or overwrite saves. Clearing browser storage removes this progress.
+
+### Courier and mobile update
+
+Explore / mobile GO now opens the investigation journal and courier dispatch. Couriers offer actual trips between businesses: accept a parcel, follow the map, stop on foot at the destination entrance and interact to deliver. Routes have distance-based rewards and time limits, with a 25% early bonus. Handoffs pay once, contracts expire, and completed totals persist. Active deliveries are cancelled on death/arrest and are not restored after reload; finish or cancel before entering a race.
+
+Dialogue Tab navigation no longer collides with the Explore shortcut. Performance settings cannot open over another modal, and failed saves are reported in Explore. Courier status updates only five times per second and adds no world meshes.
+
+### City Life expansion
+
+- **Undertow:** an eight-chapter waterfront investigation, separate from the original campaign. Follow leads through the diner, warehouse, office, club, hotel, clinic, bank and safehouse. The final choice publishes Mara's investigation or sends it for independent audit, with distinct epilogues. Chapter rewards and the finale pay once.
+- **Work in all ten venue types:** staff offer short, authored multiple-choice jobs: food preparation, stock rotation, audio troubleshooting, manifests, invoice checks, guest bookings and more. Correct answers pay $180 once per address and build local trust. These are compact interactive encounters, not full profession simulators.
+- **People:** seven street roles with different conversation options, courier/tourist walking speeds, first aid from medics, directions from tourists and race guidance from mechanics. NPCs remember conversations for their current spawn and yield to approaching traffic. Indoor staff, regulars and couriers use three shared character rigs across the entire city; visitors move within a small collision-checked area.
+- **Detailed rooms:** shelves of labeled stock/books, framed prints, ventilation, outlet plates and service-specific screens/equipment on every floor. This extra dressing adds one batched, vertex-colored mesh per room and is built only on first entry.
+- **Interaction:** press **E** (mobile context action) beside a person, or use a room's work board. Press **J** for the investigation journal; Explore / mobile GO also tracks the next lead. Conversations pause the simulation and use an accessible native dialog. Local trust, completed jobs, chapter and ending save with existing progress.
+
+### Performance changes
+
+Rooms are represented by address records at startup. Their meshes, materials and colliders are created only on first entry, then reused. Door markers are distance-culled. Low quality avoids allocating the post-processing pipeline; switching down releases its GPU targets. New cabin/bird geometry is instanced, boardwalk surfaces are batched, and skyline lights are chunked and culled. Navigation reconstructs a route with one graph search rather than repeating the search for every junction.
+
+Input edges now survive render-only frames and are consumed once per simulation tick. Pausing freezes the simulation clock, and the ocean uses that same clock. Changing graphics presets updates water detail and effect budgets. The performance meter counts the entire frame rather than just the final post-processing pass.
+
+An isolated CPU construction comparison on the same 1,004-building Low-preset world measured the interior startup stage at **4,074 ms before vs 113 ms after**, deferring **24,322 room objects**. Before the City Life detail pass, the first room took about **6 ms** to construct; the expanded room measured **28 ms** in a later integration run (startup interior metadata: **92 ms**). These are environment-specific construction measurements, not browser FPS or whole-game load-time claims. Real GPU, mobile, and visual QA remain necessary before release.
+
 ## Run it
 
 ```bash
@@ -69,11 +103,11 @@ Keyboard and mouse:
 | Horn | `H` |
 | Radio / station | `B` / `N` |
 | Map (scroll to zoom, drag to pan) | `M` |
-| Rank, stats and unlocks | `P` or `Tab` |
+| Rank, stats and unlocks | `P` |
 | First / third person | `G` |
 | Photo mode (free camera, HUD off) | `X` |
 | Controls card | `F1` |
-| Performance settings | `F2` |
+| Settings (audio, controls, accessibility, graphics) | `F2` |
 | Cycle weather | `T` (or `WX` on touch) |
 
 ## Playing on a phone or tablet
@@ -151,17 +185,17 @@ The game detects a touch device and adapts on its own:
   officers who dismount and shoot, roadblocks from three stars, a helicopter
   from four, SWAT at five, and a search phase you can slip once you break line
   of sight. Pay 'n' Spray clears the heat.
-- **Interiors.** Every one of the 1,169 generated city buildings has its own
+- **Interiors.** Every generated city building has its own
   entrance and its own interior instance. Sixty-one authored venues anchor ten
   major templates (stores, gun shops, diners, nightclubs, apartments,
-  warehouses, banks, hotels, offices, and clinics); the other 334 addresses are
+  warehouses, banks, hotels, offices, and clinics); the remaining addresses are
   seeded into distinct lofts, ateliers, garages, arcades, salons, recording
   rooms, restaurants, labs, warehouses, dojos, studios, and penthouses. They
   are staged as explorable sets with upper floors, landings, stairs and ramps;
   club stages and VIP booths; diner kitchens and jukeboxes; gun ranges;
   warehouse racks and forklifts; hotel elevators; boardrooms and server walls;
   clinic triage stations; bank security monitors, ATMs and vaults; plus hidden
-  stashes, notes, displays, and 2,685 interior hotspots. Banks have alarms and
+  stashes, notes, displays, and interior hotspots. Banks have alarms and
   robbery payouts that trigger a wanted response.
 - **Boats and aircraft.** Driveable jet skis, speedboats, yachts, fishing boats,
   sailboats, dinghies, catamarans, and patrol boats with buoyancy, grounding,
@@ -216,6 +250,12 @@ The game detects a touch device and adapts on its own:
 - **Camera.** A first-person view on foot and in every vehicle (`G`), and a
   photo mode (`X`) that stops the world, hides the HUD and gives you a free
   camera to fly.
+- **Settings and accessibility** (`F2`). Master, effects and radio volumes with
+  a mute, look speed, an inverted vertical axis, a reduced-motion option that
+  turns off camera shake and motion blur, and an HUD size multiplier. All of it
+  is stored on the device and applied live. Every stored value is clamped
+  against its own range on the way in, so a corrupted entry cannot leave the
+  game silent with no way to see why.
 - **Live weather.** Cycle clear sun, rain, snow, and a forced night front in
   the middle of a session. Rain lays down reflective puddles, reduces tire
   grip, adds foot slips and lightning; snow accumulates in drifts, slows and
@@ -271,12 +311,12 @@ src/34-save.js        capture, restore and autosave of a run
 src/35-garage.js      the personal garage: storage, respray, upgrades
 src/36-rhythm.js      the city's daily rhythm: population and mix by hour
 src/37-camera.js      first person and photo mode, layered on the follow rig
+src/38-settings.js    audio, look, motion and HUD settings, stored per device
 ```
 
 ## Notes
 
-- Three.js is pinned to `0.160.1` from cdnjs, the last version that ships a UMD
-  build. ES module CDNs are blocked in the published-page sandbox.
+- Three.js is vendored at `0.160.1` and inlined into the distribution, so core startup needs no CDN. Optional Google Fonts fall back to system fonts offline.
 - Buildings are batched per material **and** per map chunk. Without the chunk
   split each batch spans the whole map, never frustum-culls, and you pay for the
   entire skyline every frame and again in the shadow pass. The map's growth
@@ -292,8 +332,7 @@ src/37-camera.js      first person and photo mode, layered on the follow rig
   between them becomes a sliver instead of somewhere to build.
 - The simulation runs at a fixed 60Hz step, so handling is reproducible and the
   self test can drive it directly.
-- Effects are all switchable and tier-gated: the low tier keeps only bloom and
-  FXAA, which is what lets the same pipeline run on a phone.
+- Effects are all switchable and tier-gated: the low tier uses direct rendering without the post stack, preserving the GPU budget for the playable world.
 - Gameplay code asks the input layer for named actions (`act('fire')`,
   `actHit('enter')`, `moveAxis()`), never for raw keys. That indirection is the
   only reason the touch layer could be added without touching the player, the
@@ -340,3 +379,29 @@ src/37-camera.js      first person and photo mode, layered on the follow rig
   and fetched from the garage comes back in its bay with its upgrades reaching
   the physics and without leaking into the shared spec, and that a dent stays
   private to the car that took it and is fully undone by a repair.
+## Validation
+
+Run the dependency-free regression suite with Node 18 or newer:
+
+```bash
+node tests/regression.cjs
+```
+
+It checks source and inline-bundle syntax, desktop/touch one-shot input across fast and slow frames, pause timing, route connectivity, checkpoint crossing, save recovery, packaged assets and deterministic builds. GitHub Actions runs this suite on pushes and pull requests.
+
+The optional geometry/simulation smoke test needs `@napi-rs/canvas` installed in the Node environment:
+
+```bash
+node tests/world-smoke.cjs
+SUNSET_BENCHMARK_INTERIORS=1 node tests/world-smoke.cjs
+```
+
+It uses real Three.js geometry and collision systems with a simulated DOM (no WebGL renderer). It checks lazy room construction, boardwalk/lookout surfaces, quality modes, the lift, a complete time trial and payout, 600 physics steps, all ten venue types, shared resident rigs, and dialogue pause/resume. The regression suite also checks story progression, save validation, duplicate rewards and traffic yielding. It does not measure GPU FPS or validate browser layout. The benchmark option reads the original interior code from commit `47098f4`, which must exist locally.
+
+New source modules from the coastal expansion: `33-coast.js` (scenery),
+`34-activities.js` (routes and Explore), `35-save.js` (device-local
+progress), `36-city-life.js` and `37-deliveries.js`. These sit alongside the
+earlier `33-progress.js`, `34-save.js`, `35-garage.js`, `36-rhythm.js` and
+`37-camera.js`; the shared number prefixes only set load order, and the
+filenames are distinct. The build outputs both `dist/index.html` and
+`dist/sunset-bay.html`, plus `dist/assets/`.
