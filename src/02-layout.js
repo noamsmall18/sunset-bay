@@ -1213,6 +1213,11 @@
     layBeach(net, rng);
     layArterials(net, rng);
     layPerimeters(net, rng);
+    // The offshore chain, if the islands module is present. Pelican Key's
+    // streets go in here rather than being drawn separately, so blocks,
+    // buildings, traffic and navigation all treat the key as part of the
+    // city - which is exactly what a causeway makes it.
+    if (SB.Islands) SB.Islands.layRoads(net, BEACH_X);
     var ramps = layFreeway(net, rng);
 
     net.weld();
@@ -1231,6 +1236,11 @@
       reserved: RESERVED,
       freewayRamps: ramps,
       bounds: { minX: -EXTENT, maxX: EXTENT, minZ: -EXTENT, maxZ: EXTENT },
+      // How far west the world reaches. bounds stays the mainland, because
+      // props and city scatter over it; this is the number the terrain field
+      // and the play-area clamp use so the islands are inside the world.
+      seaMinX: SB.Islands ? SB.Islands.minX : -EXTENT - 220,
+      islands: SB.Islands ? SB.Islands.LIST : [],
       beachX: BEACH_X,
       waterX: BEACH_X - 120,
       DIST: DIST,
@@ -1245,7 +1255,12 @@
       var poly = face.poly;
       var c = polyCentroid(poly);
       if (inReserved(c.x, c.z, 0)) continue;
-      if (Math.abs(c.x) > EXTENT || Math.abs(c.z) > EXTENT) continue;
+      // Blocks are clipped to the mainland extent, plus whatever the islands
+      // claim: without the second test the key's streets would enclose faces
+      // that are silently dropped, and the island would come out paved and
+      // empty.
+      if (Math.abs(c.z) > EXTENT) continue;
+      if (Math.abs(c.x) > EXTENT && !(SB.Islands && SB.Islands.near(c.x, c.z, 30))) continue;
       // A face's boundary runs down the middle of the streets around it, so
       // the block proper starts half a carriageway in - and each side has to
       // be pulled in by ITS OWN road's width, or a block between an avenue and

@@ -92,7 +92,11 @@
 
   Game.prototype.stepLayout = function () {
     this.layout = SB.Roads.build();
-    this.layout.playBounds = { minX: this.layout.bounds.minX - 220, maxX: this.layout.bounds.maxX + 60,
+    // The play area has to reach the islands, or the invisible wall stands
+    // between the causeway and the key it crosses to.
+    var westEdge = Math.min(this.layout.bounds.minX - 220,
+      (this.layout.seaMinX === undefined ? this.layout.bounds.minX : this.layout.seaMinX) - 40);
+    this.layout.playBounds = { minX: westEdge, maxX: this.layout.bounds.maxX + 60,
       minZ: this.layout.bounds.minZ - 60, maxZ: this.layout.bounds.maxZ + 60 };
     this.world = new SB.World();
     this.world.beachX = this.layout.beachX;
@@ -166,6 +170,9 @@
   };
 
   Game.prototype.stepExpansion = function () {
+    // The islands go up before the waterfront so their helipad is registered
+    // by the time anything goes looking for somewhere to land.
+    if (SB.Islands && SB.Islands.Works) this.islands = new SB.Islands.Works(this);
     if (SB.Coast) this.coast = new SB.Coast(this);
     if (SB.Activities) this.activities = new SB.Activities(this);
     if (SB.CityLife) this.cityLife = new SB.CityLife(this);
@@ -277,6 +284,7 @@
     if (this.fx) this.fx.render(dt);
     if (this.audio) this.audio.render(dt, this);
     if (this.coast) this.coast.render(dt, lamps);
+    if (this.islands) this.islands.render(dt);
     if (this.activities) this.activities.render(dt);
     if (this.cityLife) this.cityLife.render(dt);
     if (this.deliveries) this.deliveries.render(dt);
@@ -829,6 +837,70 @@
           '% of blocks are slivers');
       }
 
+      // ---- islands: land, reachable, and pointed at by the missions --------
+      // The offshore chain is authored, and authored coordinates rot. Three
+      // checks, all of which would have caught a mistake I made writing them:
+      // the islands have to be dry land where the height field agrees, the
+      // causeway has to actually connect Pelican Key to the city road graph,
+      // and every island mission stage has to land on the kind of surface it
+      // asks for - drive and goto on ground, sail on water deep enough to
+      // float a boat.
+      if (SB.Islands && this.islands) {
+        var isles = SB.Islands.LIST;
+        for (var il = 0; il < isles.length; il++) {
+          var isle = isles[il];
+          var ih = this.world.baseHeight(isle.x, isle.z);
+          if (ih < this.world.waterY + 2) {
+            issues.push(isle.name + ' is underwater at its centre (' + ih.toFixed(1) + 'm)');
+          }
+          // and it has to be an island: sea all the way round it
+          var wet = 0;
+          for (var ia = 0; ia < 8; ia++) {
+            var ang = (ia / 8) * Math.PI * 2;
+            var ox = isle.x + Math.cos(ang) * isle.r * 1.34;
+            var oz = isle.z + Math.sin(ang) * isle.r * 1.34;
+            if (this.world.baseHeight(ox, oz) < this.world.waterY - 0.5) wet++;
+          }
+          if (wet < 7) issues.push(isle.name + ' is joined to something: only ' + wet + '/8 bearings are sea');
+        }
+
+        // Pelican Key drives: a road node on the key has to route to downtown.
+        var keyIsle = SB.Islands.byId('pelican');
+        var keyNode = Rd.nearestNode(L, keyIsle.x, keyIsle.z);
+        var townNode = Rd.nearestNode(L, 0, 0);
+        var keyPath = Rd.findPath(L, keyNode.id, townNode.id);
+        if (!keyPath || keyPath.length < 2) {
+          issues.push('Pelican Key is not reachable by road - the causeway did not weld');
+        }
+
+        var islandStages = { 'the-causeway': 1, 'gull-rock-light': 1, 'mercy-point': 1 };
+        var chain = SB.Missions.CHAIN || [];
+        for (var mi = 0; mi < chain.length; mi++) {
+          if (!islandStages[chain[mi].id]) continue;
+          var sts = chain[mi].stages;
+          for (var si = 0; si < sts.length; si++) {
+            var st2 = sts[si];
+            if (st2.x === undefined) continue;
+            var gh = this.world.baseHeight(st2.x, st2.z);
+            if (st2.type === 'sail') {
+              if (gh > this.world.waterY - 1.0) {
+                issues.push(chain[mi].id + ' stage ' + si + ' asks you to sail onto dry land');
+              }
+            } else if (st2.type === 'drive' || st2.type === 'goto' || st2.type === 'pickup') {
+              if (gh < this.world.waterY + 0.3) {
+                issues.push(chain[mi].id + ' stage ' + si + ' points at open water');
+              }
+              if (st2.type === 'drive') {
+                var dn = Rd.nearestNode(L, st2.x, st2.z);
+                if (SB.M.dist(dn.x, dn.z, st2.x, st2.z) > (st2.r || 10) + 26) {
+                  issues.push(chain[mi].id + ' stage ' + si + ' has no road within reach');
+                }
+              }
+            }
+          }
+        }
+      }
+
       // ---- contracts: every generated job must be runnable -----------------
       if (this.missions && this.progress && SB.Missions.CONTRACT_TYPES) {
         var savedXp = this.progress.xp, savedUnlocked = this.progress.unlocked;
@@ -1069,7 +1141,7 @@
         ' building doors, ' + this.interiors.rooms.length + ' unique furnished interiors, ' +
         generatedRooms + ' generated variants, ' + hotspotTotal + ' interior hotspots, ' +
         'multi-level/bank/vehicle/car-stability/boat/plane/heli/routing/contract/' +
-        'garage/damage/rhythm/camera/settings/save/road-network probes clean)');
+        'garage/damage/rhythm/camera/settings/save/road-network/island probes clean)');
     }
     this.selfTestIssues = issues;
   };

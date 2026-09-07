@@ -278,6 +278,7 @@
   HUD.prototype.mapPlaces = function () {
     var g = this.game, places = [], L = g.layout;
     if (g.activities) places = places.concat(g.activities.places());
+    if (g.islands) places = places.concat(g.islands.landmarks);
     var mission = this.missionPlace();
     if (mission) places.push(mission);
     // A contract you can see on the radar but not route to is a contract you
@@ -1229,6 +1230,30 @@
     ctx.fillStyle = 'rgba(192,143,74,0.24)';
     T(L.beachX, wz0, a); T(L.beachX + 34, wz1, b);
     ctx.fillRect(a[0], a[1], b[0] - a[0], b[1] - a[1]);
+
+    // The islands are land, and a map that shows their name floating on open
+    // water is a map that has not told you they are there. Drawn from the same
+    // shoreline function the terrain is built from, so the outline on the map
+    // is the outline you sail around.
+    if (SB.Islands) {
+      var isles = SB.Islands.LIST;
+      for (var isl = 0; isl < isles.length; isl++) {
+        var it = isles[isl];
+        ctx.beginPath();
+        for (var ia = 0; ia <= 48; ia++) {
+          var iang = (ia / 48) * Math.PI * 2;
+          var ip = SB.Islands.shorePoint(it, iang, 4);
+          T(ip.x, ip.z, a);
+          if (ia === 0) ctx.moveTo(a[0], a[1]); else ctx.lineTo(a[0], a[1]);
+        }
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(152,150,116,0.40)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(214,196,150,0.55)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+    }
 
     var i;
     // District masses make the city legible without painting individual

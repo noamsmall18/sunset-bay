@@ -210,13 +210,19 @@
     var wmat = new THREE.MeshStandardMaterial({
       color: 0x2e6ea0,
       roughness: 0.14,
-      metalness: 0.42,
+      // Water is a dielectric, and it was being shaded as a half-metal with a
+      // 1.35x environment reflection. Looking along the surface - which is how
+      // you see the sea from a beach or a boat rather than from the air - that
+      // reflected so much of the environment that the ocean came out the same
+      // colour as the sand it meets, and the shoreline disappeared. Reflection
+      // still carries the sunset; it just no longer overwhelms the water.
+      metalness: 0.04,
       normalMap: this.waterNormal,
       normalScale: new THREE.Vector2(0.72, 0.72),
       transparent: true,
-      opacity: 0.91,
+      opacity: 0.93,
       side: THREE.DoubleSide,
-      envMapIntensity: 1.35
+      envMapIntensity: 0.42
     });
     this.waterMat = wmat;
     this.water = new THREE.Mesh(wgeo, wmat);
@@ -449,6 +455,16 @@
       this.mesh.position.copy(camera.position);
       // A dome authored at a larger preset must not be clipped on Low.
       this.mesh.scale.setScalar(Math.min(Q.skyRadius, camera.far * 0.90) / this.mesh.geometry.parameters.radius);
+      // The ocean follows the camera in x as well as z. It used to be pinned
+      // at x = -1500 on the assumption that the player is always in the city
+      // and the sea is always to the west; from an island six hundred metres
+      // offshore that assumption fails and you can see the water end in a
+      // straight line with bare seabed beyond it. Nothing inland sits below
+      // the waterline, so a plane that reaches over the city is hidden by the
+      // ground it passes under.
+      var wx = camera.position.x;
+      if (this.world && isFinite(this.world.beachX)) wx = Math.min(wx, this.world.beachX + 60);
+      this.water.position.x = wx;
       this.water.position.z = cz;
     }
 

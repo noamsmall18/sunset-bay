@@ -19,7 +19,7 @@ const context = {
 };
 vm.createContext(context);
 function load(file) { vm.runInContext(fs.readFileSync(path.join(ROOT, 'src', file), 'utf8'), context, { filename: file }); }
-load('00-core.js'); load('02-layout.js'); load('34-activities.js'); load('35-save.js');
+load('00-core.js'); load('02b-islands.js'); load('02-layout.js'); load('34-activities.js'); load('35-save.js');
 const SB = context.window.SB;
 function pressProbe(intervals, touch = false) {
   now = 1000; callbacks = [];
