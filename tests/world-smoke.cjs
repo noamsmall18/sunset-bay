@@ -27,7 +27,7 @@ const window = { innerWidth: 1280, innerHeight: 720, devicePixelRatio: 1,
 const context = { THREE, window, document, console, Image, performance, Date, Math, Number,
   location: { hash: '#quality=low' }, navigator: { hardwareConcurrency: 8, deviceMemory: 8, maxTouchPoints: 0 },
   getComputedStyle() { return { getPropertyValue() { return '0'; } }; },
-  localStorage: { getItem() { return null; }, setItem() {} }, setTimeout() {}, setInterval() {}, requestAnimationFrame() {} };
+  localStorage: { getItem() { return null; }, setItem() {} }, setTimeout() {}, setInterval() {}, requestAnimationFrame() { return 1; }, cancelAnimationFrame() {} };
 vm.createContext(context);
 for (const f of fs.readdirSync(path.join(ROOT, 'src')).filter(f => f.endsWith('.js')).sort()) {
   vm.runInContext(fs.readFileSync(path.join(ROOT, 'src', f), 'utf8'), context, { filename: f });
@@ -108,6 +108,7 @@ for (const r of representatives) {
   game.interiors.ensureRoom(r);
   assert(r.detailVertices > 1000);
   assert(r.hotspots.some(h => h.kind === 'localwork'));
+  assert(r.hotspots.some(h => h.kind === 'pastime'));
   residentLife.enter(r);
   assert.equal(residentLife.people.length, 3);
   if (residents) assert(residentLife.people.every((p, i) => p.char === residents[i]));
@@ -118,6 +119,26 @@ for (const r of representatives) {
 residentLife.enter(representatives[0]); game.paused = false;
 residentLife.talk(residentLife.people[0]); assert(game.paused && game.uiBlocking && residentLife.open);
 residentLife.close(); assert(!game.paused && !game.uiBlocking && !residentLife.open);
+// Open each challenge through its real interior hotspot, then leave/reopen safely.
+for(const r of representatives) {
+  game.interiors.current=r;residentLife.enter(r);
+  game.interiors.activateHotspot(r.hotspots.find(h=>h.kind==='pastime'));
+  assert(game.pastimes.run && game.paused && game.uiBlocking);
+  residentLife.journal();assert.equal(game.pastimes.run,null,'switching views cancels the challenge loop');
+  game.pastimes.open(r);residentLife.close();assert.equal(game.pastimes.run,null);assert(!game.paused&&!game.uiBlocking);
+}
+game.interiors.current=null;
+// game.tuneShop, not game.garage: 35-garage.js already owns SB.Garage for the
+// car park bay, so the patch's model tuning shop was renamed on the way in.
+// The assertions below are the patch's own, unchanged.
+const garageCar=game.traffic.acquire('sedan'), originalTorque=SB.VehicleSpecs.sedan.torque;
+game.player.vehicle=garageCar;game.player.money=10000;game.bus.emit('vehicleEntered',garageCar);
+game.tuneShop.buy('engine');assert(garageCar.spec.torque>originalTorque);
+game.player.vehicle=null;game.traffic.recycle(garageCar);
+const recycled=game.traffic.acquire('sedan');assert.equal(recycled,garageCar);assert.equal(recycled.spec.torque,originalTorque);
+assert.equal(game.tuneShop.car(),null,'pooled replacement is not the remembered parked car');
+game.bus.emit('vehicleEntered',recycled);assert(recycled.spec.torque>originalTorque,'owned model upgrade reapplies on entry');
+game.traffic.recycle(recycled);
 residentLife.enter(null); assert(residentLife.people.every(p => !p.char.root.visible));
 console.log('PASS: world construction, lazy-room identity/colliders, boardwalk and lookout surfaces, three quality tiers, lift, complete race, single payout, 600 fixed steps and finite expansion geometry.');
 console.log(JSON.stringify({ buildings: game.city.buildings.length, interiorsMaterialized: game.interiors.rooms.filter(r => r.group).length, expansionMeshes: meshes, expansionVertices: vertices, timings }, null, 2));

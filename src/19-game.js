@@ -180,10 +180,20 @@
     if (SB.Activities) this.activities = new SB.Activities(this);
     if (SB.CityLife) this.cityLife = new SB.CityLife(this);
     if (SB.Deliveries) this.deliveries = new SB.Deliveries(this);
+    if (SB.Pastimes) this.pastimes = new SB.Pastimes(this);
+    // The patch calls this one SB.Garage too, and it loads after 35-garage.js,
+    // so taking its line verbatim would overwrite the car park garage that
+    // Game.fixed, SB.Save and the HUD all reach through `game.garage` - and
+    // the replacement has no fixed(), so the first physics step would throw.
+    // They are different features, not two versions of one, so the model
+    // tuning shop keeps its own name and its own slot.
+    if (SB.TuneShop) this.tuneShop = new SB.TuneShop(this);
+    if (SB.Neighbors) this.neighbors = new SB.Neighbors(this);
     // Constructed but NOT restored here. Restoring during world build ignored
     // the title card: the player could pick "New game" and still start with
     // the previous run's progress, because this had already put it back.
-    // 20-startup.js now restores it only when Continue is chosen.
+    // 20-startup.js restores it only when Continue is chosen, so the patch's
+    // `this.saveGame.restore()` on this line is deliberately not taken.
     if (SB.SaveGame) this.saveGame = new SB.SaveGame(this);
   };
 
@@ -246,6 +256,7 @@
     if (this.rail) this.rail.step(dt);
     if (this.rooftops) this.rooftops.fixed(dt);
     if (this.peds) this.peds.fixed(dt);
+    if (this.neighbors) this.neighbors.fixed(dt);
     if (this.police) this.police.fixed(dt);
     if (this.combat) this.combat.fixed(dt);
     if (this.missions) this.missions.fixed(dt);
@@ -260,6 +271,13 @@
   };
 
   Game.prototype.render = function (dt, alpha) {
+    // Dialogs animate in the DOM. Redraw their frozen 3D background at 8 Hz.
+    // Use wall time so a paused simulation does not defeat this budget.
+    var now = performance.now();
+    if (this.paused && this.uiBlocking && this._modalFrameAt && now - this._modalFrameAt < 125) {
+      this.input.endFrame(); return;
+    }
+    this._modalFrameAt = this.paused && this.uiBlocking ? now : 0;
     if (this.paused || !this.started) dt = 0;
     this.renderer.info.reset();
     SB._game = this;
@@ -281,6 +299,7 @@
     if (this.transport) this.transport.render(dt, lamps);
     if (this.rooftops) this.rooftops.render(dt, lamps);
     if (this.peds) this.peds.render(dt);
+    if (this.neighbors) this.neighbors.render(dt);
     if (this.police) this.police.render(dt, lamps);
     if (this.combat) this.combat.render(dt);
     if (this.interiors) this.interiors.render(dt);

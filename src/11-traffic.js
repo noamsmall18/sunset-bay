@@ -83,6 +83,8 @@
       v = new SB.Vehicle(type, this.world, {});
       v.addToScene(this.scene);
     }
+    v.spec = SB.VehicleSpecs[type];
+    v.generation = (v.generation || 0) + 1;
     v.health = v.maxHealth;
     v.destroyed = false;
     v.burning = 0;

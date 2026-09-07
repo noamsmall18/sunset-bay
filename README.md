@@ -5,6 +5,15 @@ procedural, with a small authored photo set layered into the title card and
 rooftop billboards across the map. Procedural fallbacks keep the core game
 playable if the optional `assets/` folder is unavailable.
 
+## After Hours expansion
+
+- **Four playable challenge systems across ten venue types:** fill order tickets, repeat growing memory sequences, time precision hits, and solve seeded 3×3 circuit puzzles. Start from GO / Explore → After hours, staff conversations or green wall tablets. Challenges have explicit start buttons, large touch targets and time limits. A score of 650 completes the venue's local shift and can advance Undertow; improving each address's personal best pays up to $200 total.
+- **Bay Garage:** park a road car and open GO / Explore → Garage, or speak to a street mechanic. Buy three levels each of engine tuning (+8% torque per level), brakes (+10%) and tires (+5% grip). Level 2 requires 10 local trust and level 3 requires 25. Repairs and five saved paint finishes give earnings more uses. Builds persist per vehicle model and apply when driving another matching car; traffic pooling resets ambient cars to stock specifications.
+- **Guided walks:** ask a Tourist “Need a guide?” and walk to a nearby business together for cash and 5 local trust. The existing NPC follows a bounded trail of your footsteps, retains collision handling and yields to traffic. Stay on foot and nearby; entering a building or vehicle, injury/fleeing, or abandoning the neighbor cancels the walk. Completed totals persist; active walks are not restored after reload. These are local escorted walks, not global autonomous pathfinding.
+- **Mobile performance:** frozen 3D backgrounds redraw at most eight times per second during modal activities; only the small challenge UI animates at 30 Hz. Challenges pause while the document is hidden and cancel when changing views. New activities and garage menus allocate no extra world character rigs; the wall tablet is included in the existing room detail batch.
+
+Validation includes actual challenge completion/failure, solvable circuit seeds, reward protection, tuning without shared-spec mutation, upgrade save bounds, guided-walk movement/cancellation, and opening all ten venues' challenges through real hotspot handlers. The simulated-DOM integration suite checks gameplay and geometry; it does not establish mobile GPU FPS or visual correctness.
+
 ## Coastal expansion
 
 Open **Explore** (`Tab` on desktop, `GO` on touch) to select an activity or destination.
@@ -273,6 +282,7 @@ src/00-core.js        math, RNG, spatial hash, input, fixed-step loop
 src/01-textures.js    every texture, painted with Canvas2D
 src/02-layout.js      regional road generator, block extraction, lane graph,
                       signals, rail alignment
+src/02b-islands.js    the offshore chain: shape, causeway roads, structures
 src/03-world.js       collision boxes, drivable surfaces, raycasts
 src/04-geom.js        quad-soup builder, geometry merge, instancing
 src/04b-terrain.js    height field, road carving, ground mesh, road decks
@@ -306,13 +316,27 @@ src/29-weather.js     live precipitation, surface conditions, puddles, drifts,
 src/30-freeway.js     elevated freeway decks, parapets and piers
 src/31-rail.js        track, viaduct, stations and the drivable train
 src/32-rooftops.js    rooftop billboards and roof-level detail
+src/33-coast.js       boardwalk, lighthouse lookout, night skyline, birds
 src/33-progress.js    rank, respect, statistics and rank-gated unlocks
+src/34-activities.js  time trials, speed traps, discoveries, the Explore menu
 src/34-save.js        capture, restore and autosave of a run
-src/35-garage.js      the personal garage: storage, respray, upgrades
+src/35-garage.js      the car park garage: storage, respray, upgrades
+src/35-save.js        device-local progress for the expansion's own systems
+src/36-city-life.js   NPC roles, conversations, local work, the Undertow story
 src/36-rhythm.js      the city's daily rhythm: population and mix by hour
 src/37-camera.js      first person and photo mode, layered on the follow rig
+src/37-deliveries.js  courier dispatch between real businesses
+src/38-pastimes.js    the four venue challenges: orders, memory, timing, circuit
 src/38-settings.js    audio, look, motion and HUD settings, stored per device
+src/39-fire.js        fires, spread, the fire station and its engines
+src/39-garage.js      SB.TuneShop: permanent per-model tuning, paint, repairs
+src/40-neighbors.js   guided walks with a real pedestrian following you
 ```
+
+The numeric prefix only sets load order, so duplicates across the list above
+are deliberate; two files may share a number without sharing anything else.
+`39-garage.js` exports `SB.TuneShop`, not `SB.Garage` - `35-garage.js` already
+owns that name for the car park bay, and the two are different features.
 
 ## Notes
 

@@ -1057,6 +1057,7 @@
     var g = this.game, p = g.player, text = '';
     if (g.cityLife && spot.kind === 'journal') { g.cityLife.journal(); return; }
     if (g.cityLife && spot.kind === 'localwork') { g.cityLife.work(this.current); return; }
+    if (g.pastimes && ['pastime', 'range', 'jukebox', 'kitchen', 'cameras', 'triage', 'manifest'].indexOf(spot.kind) >= 0) { g.pastimes.open(this.current); return; }
     switch (spot.kind) {
       case 'cooler': text = 'Cold case checked. Someone left a note in the ice.'; break;
       case 'notice': text = '“No cameras after midnight.” The handwriting is fresh.'; break;

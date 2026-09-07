@@ -26,8 +26,20 @@
     if (g.interiors) g.interiors.rooms.forEach(function (r) {
       if (r.robbed || r.stashTaken) rooms.push({ index: r.index, robbed: !!r.robbed, stashTaken: !!r.stashTaken });
     });
+    // The patch's version of this line re-adds money, armour, mission index,
+    // completed missions and the weapon loadout. All five belong to SB.Save
+    // (34-save.js) under a different key, and two systems writing the same
+    // fields to two keys is the collision that was resolved when the coastal
+    // expansion landed: whichever restored last won, and the two halves could
+    // come from different points in time. The three new subsystems are taken;
+    // the shared fields stay where they already live. (The patch's line also
+    // reads a `c` that only exists in its own base file, so keeping it would
+    // have thrown a ReferenceError on every save.)
     return {
       version: 1, savedAt: Date.now(),
+      neighbors: g.neighbors ? g.neighbors.snapshot() : null,
+      pastimes: g.pastimes ? g.pastimes.snapshot() : null,
+      tuneShop: g.tuneShop ? g.tuneShop.snapshot() : null,
       deliveries: g.deliveries ? g.deliveries.snapshot() : null,
       life: g.cityLife ? g.cityLife.snapshot() : null,
       records: a ? a.records : {}, discoveries: a ? a.discoveries : {},
@@ -68,6 +80,9 @@
       });
       if (g.cityLife) g.cityLife.restore(data.life);
       if (g.deliveries) g.deliveries.restore(data.deliveries);
+      if (g.pastimes) g.pastimes.restore(data.pastimes);
+      if (g.tuneShop) g.tuneShop.restore(data.tuneShop);
+      if (g.neighbors) g.neighbors.restore(data.neighbors);
       this.lastSaved = finite(data.savedAt, 0, Date.now(), 0);
       return true;
     } catch (err) { this.failed = true; return false; }

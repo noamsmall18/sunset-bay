@@ -29,6 +29,7 @@
   Deliveries.prototype.accept = function (offer) {
     if (this.active || this.cooldown > 0 || !offer || !this.game.interiors.doors.includes(offer.door)) return false;
     if (this.game.activities && this.game.activities.active) return false;
+    if (this.game.neighbors && this.game.neighbors.active) return false;
     this.active = { door: offer.door, cargo: offer.cargo, reward: offer.reward, limit: offer.limit, elapsed: 0 };
     this.track(); return true;
   };

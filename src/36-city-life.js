@@ -69,9 +69,10 @@
   Life.prototype.navigate = function () {
     if (this.chapter >= STORY.length) return;
     var service = STORY[this.chapter][0], g = this.game, best = null, distance = Infinity;
+    var point = g.interiors.current ? g.interiors.returnPoint || g.player.pos : g.player.pos;
     g.interiors.doors.forEach(function (d) {
       if (d.room.service !== service) return;
-      var dd = M.dist2(d.x, d.z, g.player.pos.x, g.player.pos.z);
+      var dd = M.dist2(d.x, d.z, point.x, point.z);
       if (dd < distance) { distance = dd; best = d; }
     });
     if (best) { g.hud.setDestination({ id: 'undertow', name: best.name, x: best.x, z: best.z, color: '#f4c271', icon: '◆', kind: 'waypoint' }); }
@@ -104,10 +105,12 @@
     panel.addEventListener('cancel', function (e) { e.preventDefault(); self.close(); });
   };
   Life.prototype.show = function (title, text, choices) {
+    this.clearView();
     this.ensureUI(); var self = this, g = this.game;
     if (!this.open) {
       this.previousFocus = document.activeElement; this.wasPaused = g.paused;
       this.open = true; g.uiBlocking = true; g.setPaused(true);
+      if (g.touch) g.touch.releaseAll();
       if (document.pointerLockElement && document.exitPointerLock) document.exitPointerLock();
       this.panel.showModal();
     }
@@ -121,8 +124,13 @@
     });
     this.panel.querySelector('button').focus();
   };
+  Life.prototype.clearView = function () {
+    var cleanup = this.onViewClose; this.onViewClose = null;
+    if (cleanup) cleanup();
+  };
   Life.prototype.close = function () {
     if (!this.open) return;
+    this.clearView();
     this.open = false; this.panel.close(); this.game.uiBlocking = false;
     this.game.setPaused(this.wasPaused);
     if (this.previousFocus && this.previousFocus.focus) this.previousFocus.focus();
@@ -153,14 +161,17 @@
       Medic: 'I can spare a first-aid kit for $40.', Tourist: 'The boardwalk and lighthouse are worth the trip. Open Explore to mark them on your map.',
       Commuter: 'Cross at the corners and watch the traffic. The bay gets busy after dark.',
       Vendor: 'Want to help the neighborhood? Local businesses have small jobs you can finish inside.',
-      Mechanic: 'Keep an eye on your car before a long run. I can explain the local races.',
+      Mechanic: 'Bring a parked car and I can fit an engine tune, stronger brakes, sport tires or a fresh finish. Your build stays with that model.',
       Reporter: 'Mara is following the Undertow contracts. The investigation journal has the latest lead.'
     };
     var options = [['Ask about Undertow', function () { self.journal(); }]];
     if (role === 'Courier' && self.game.deliveries) options.unshift(['Courier dispatch', function () { self.game.deliveries.menu(); }]);
     if (room && person === this.people[0]) options.unshift(['Help with ' + this.job(room)[1].toLowerCase(), function () { self.work(room); }]);
+    if (room && this.game.pastimes) options.unshift(['Play ' + this.game.pastimes.theme(room)[1], function () { self.game.pastimes.open(room); }]);
     if (!room && role === 'Tourist' && self.game.coast) options.unshift(['Show me the boardwalk', function () { self.game.hud.setDestination(self.game.coast.landmarks[0]); self.close(); }]);
     if (!room && role === 'Mechanic') options.unshift(['Show me the driving challenges', function () { self.close(); self.game.activities.toggle(true); }]);
+    if (!room && role === 'Mechanic' && this.game.tuneShop) options.unshift(['Open Bay Garage', function () { self.game.tuneShop.menu(); }]);
+    if (!room && role === 'Tourist' && this.game.neighbors) options.unshift(['Need a guide?', function () { self.game.neighbors.menu(person); }]);
     if (!room && role === 'Medic') options.unshift(['Buy first aid · $40', function () {
       var p = self.game.player;
       if (p.money < 40 || p.health >= p.maxHealth) { self.show('First aid', 'You either do not need treatment or cannot afford it.', []); return; }
@@ -243,10 +254,16 @@
         box(ex+.05,1.35,ez+.26,.44,.06,.01,0x7ec8b0);
       }
     }
+    // A wall tablet marks the playable challenge without obstructing the aisle.
+    var consoleX = room.hw - 2.4, consoleZ = room.hd - .14;
+    box(consoleX, 1.15, consoleZ, .85, .6, .09, 0x182934);
+    box(consoleX+.05, 1.21, consoleZ-.012, .75, .48, .01, 0x3f8e84);
+    for (var pad=0;pad<4;pad++) box(consoleX+.11+(pad%2)*.32, 1.28+Math.floor(pad/2)*.18, consoleZ-.025, .22, .12, .01, 0xa6efc9);
     var mat = Life.detailMaterial || (Life.detailMaterial = new THREE.MeshStandardMaterial({ vertexColors:true, roughness:.78 }));
     room.group.add(qb.mesh(mat,false,true)); room.detailVertices = qb.count;
     interiors.addHotspot(room, room.spawn.x+.8, room.spawn.z-1, 'Read local investigation journal', 'journal', 0);
     interiors.addHotspot(room, room.spawn.x-.8, room.spawn.z-1, 'Local work board', 'localwork', 0);
+    interiors.addHotspot(room, ox+consoleX+.4, oz+consoleZ-.65, 'Play the venue challenge', 'pastime', 0);
   };
   SB.CityLife = Life; SB.CityLifeJobs = JOBS; SB.CityLifeStory = STORY;
 })(window.SB = window.SB || {});

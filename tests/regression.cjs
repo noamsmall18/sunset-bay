@@ -147,6 +147,89 @@ assert(!courier.active); assert.equal(deliveryGame.player.money, deliveryPay);
 const savedCourier = new SB.Deliveries(deliveryGame); savedCourier.restore(courier.snapshot());
 assert.equal(savedCourier.completed, 1); assert.equal(savedCourier.earned, deliveryPay);
 assert(!savedCourier.active, 'in-progress contracts never silently resume after reload');
+// Playable challenges: all four can finish, reject invalid input and pay only improvements.
+load('38-pastimes.js');
+for (let seed=1; seed<=12; seed++) {
+  let solved=false;
+  for(let mask=0;mask<512&&!solved;mask++) {
+    const circuit=new SB.PastimeSession('circuit',seed);
+    assert(!circuit.hit(-1));
+    for(let cell=0;cell<9;cell++)if(mask&(1<<cell))circuit.hit(cell);
+    solved=circuit.won;
+    if(solved)assert(circuit.score>=650);
+  }
+  assert(solved,'every seeded circuit must have a solution');
+}
+const memory=new SB.PastimeSession('memory',18);
+assert(!memory.hit(0),'watch phase cannot accept input');
+while(!memory.done) {
+  const count=memory.round+2; memory.step(count*.85+.61);
+  for(let i=0;i<count;i++)memory.hit(memory.sequence[i]);
+}
+assert(memory.won && memory.score>=650);
+const failedMemory=new SB.PastimeSession('memory',18);
+for(let i=0;i<3;i++){failedMemory.step(3);failedMemory.hit((failedMemory.sequence[0]+1)%4);}
+assert(failedMemory.done&&!failedMemory.won);
+const orders=new SB.PastimeSession('orders',12);
+orders.hit((orders.sequence[0]+1)%4);assert.equal(orders.mistakes,1);assert.equal(orders.elapsed,3);
+while(!orders.done)for(const item of Array.from(orders.sequence))orders.hit(item);
+assert(orders.won&&orders.score>=650);
+const timing=new SB.PastimeSession('timing',45);
+while(!timing.done && timing.elapsed<99){timing.step(.01);if(Math.abs(timing.needle-timing.target)<.015)timing.hit(0);}
+assert(timing.won&&timing.score>900);assert(!timing.hit(0),'finished rounds reject repeat rewards');
+const timeout=new SB.PastimeSession('orders',1);timeout.step(76);assert(timeout.done&&!timeout.won);
+const pastimes=new SB.Pastimes(lifeGame), prizeRoom=lifeRooms.find(r=>r.service==='diner');
+const beforePastime=lifeGame.player.money;
+const prize=pastimes.award(prizeRoom,orders);assert(prize>0);assert.equal(pastimes.award(prizeRoom,orders),0);
+const lower=new SB.PastimeSession('orders',2);lower.finish(true);lower.score=orders.score-10;
+assert.equal(pastimes.award(prizeRoom,lower),0);assert.equal(lifeGame.player.money,beforePastime+prize);
+const restoredPastimes=new SB.Pastimes(lifeGame);restoredPastimes.restore({...pastimes.snapshot(),'9999:orders':1000,'0:invalid':500});
+assert.equal(Object.keys(restoredPastimes.best).length,1);
+// Use the real vehicle specs; tuning must never mutate the shared fleet baseline.
+// The module exports SB.TuneShop here rather than SB.Garage: 35-garage.js
+// already owns that name for the car park bay. The assertions are the patch's,
+// unchanged - only the constructor the test reaches for was renamed with it.
+load('04-geom.js');load('07-vehicle.js');load('39-garage.js');
+const stock=JSON.stringify(SB.VehicleSpecs.sedan);
+const testCar={key:'sedan',name:'Test sedan',craftType:'car',pos:{x:0,y:0,z:0},group:{visible:true},generation:1,
+  health:500,maxHealth:1000,speed:()=>0,setColor(c){this.color=c;}};
+const garageGame={bus:new SB.Bus(),player:{pos:{x:0,y:0,z:0},vehicle:testCar,money:10000},interiors:{current:null},
+  cityLife:{reputation:0},activities:{active:null},saveGame:{save(){}}};
+const garage=new SB.TuneShop(garageGame);garageGame.bus.emit('vehicleEntered',testCar);
+garage.buy('engine');assert.equal(garageGame.player.money,9300);assert.equal(testCar.spec.torque,324);
+garage.apply(testCar);assert.equal(testCar.spec.torque,324,'re-entry cannot stack multipliers');
+garage.buy('engine');assert.equal(garageGame.player.money,9300,'trust lock does not charge');
+garageGame.cityLife.reputation=25;garage.buy('engine');garage.buy('engine');
+const maxMoney=garageGame.player.money;garage.buy('engine');assert.equal(garageGame.player.money,maxMoney);
+garage.buy('brakes');garage.buy('tires');assert(testCar.spec.brake>SB.VehicleSpecs.sedan.brake&&testCar.spec.muF>SB.VehicleSpecs.sedan.muF);
+assert.equal(JSON.stringify(SB.VehicleSpecs.sedan),stock);
+garage.repair();assert.equal(testCar.health,1000);const repairedMoney=garageGame.player.money;garage.repair();assert.equal(garageGame.player.money,repairedMoney);
+garage.paint(0x218f98);assert.equal(testCar.color,0x218f98);
+const savedGarage=new SB.TuneShop(garageGame);savedGarage.restore(garage.snapshot());assert.equal(savedGarage.build('sedan').engine,3);
+garageGame.player.vehicle=null;testCar.generation++;assert.equal(garage.car(),null,'recycled pooled car must not be treated as your last car');
+garageGame.player.vehicle=testCar;garageGame.player.money=0;const oldBrakes=garage.build('sedan').brakes;garage.buy('brakes');assert.equal(garage.build('sedan').brakes,oldBrakes);
+garage.restore({sedan:{engine:99,brakes:-2,tires:Infinity,paint:123},unknown:{engine:3}});
+assert.equal(garage.build('sedan').engine,3);assert.equal(garage.build('sedan').brakes,0);assert.equal(garage.build('sedan').tires,0);assert.equal(Object.keys(garage.models).length,1);
+// Guided walks: real pedestrian movement follows the route, pays once, and cancels cleanly.
+load('40-neighbors.js');
+const neighbor={role:'Tourist',x:0,y:0,z:0,yaw:0,speed:0,speedWant:1.2,state:'walk',generation:1};
+const walkDoor={x:100,y:0,z:0,name:'Local diner',room:{service:'diner'}};
+const walkGame={bus:new SB.Bus(),player:{pos:{x:2,y:0,z:0},mode:'foot',money:0},peds:{list:[neighbor]},
+  interiors:{current:null,doors:[walkDoor]},cityLife:{reputation:0},activities:{active:null},deliveries:{active:null},missions:{active:null},
+  hud:{toast(){},setDestination(d){this.destination=d;},navigation:{points:[]}},saveGame:{save(){}}};
+const walks=new SB.Neighbors(walkGame), walkOffer=walks.offer(neighbor);assert(walkOffer);assert(walks.accept(walkOffer));assert(!walks.accept(walkOffer));
+const pedSystem={game:walkGame,world:{resolveCircle(){return false;},surfaceAt(){return {y:0};}},grid:{queryPoint(){return [];}},_q:[],_stamp:0,checkRunOver(){}};
+for(let i=0;i<4000&&walks.active;i++){
+  walkGame.player.pos.x=Math.min(100,walkGame.player.pos.x+2.3/60);
+  walks.fixed(1/60);if(walks.active)SB.Peds.prototype.stepPed.call(pedSystem,neighbor,1/60,walkGame.player.pos.x,0);
+}
+assert.equal(walks.completed,1);assert.equal(walkGame.player.money,walkOffer.reward);assert.equal(walkGame.cityLife.reputation,5);
+walks.fixed(10);assert.equal(walkGame.player.money,walkOffer.reward);assert(!walks.offer(neighbor));assert.equal(neighbor.followTarget,null);
+neighbor.helped=false;neighbor.x=0;walkGame.player.pos.x=2;assert(walks.accept(walks.offer(neighbor)));
+walkGame.player.pos.x=90;walks.fixed(9);assert.equal(walks.active,null);assert.equal(neighbor.followTarget,null);
+walkGame.player.pos.x=2;assert(walks.accept(walks.offer(neighbor)));walkGame.bus.emit('vehicleEntered',testCar);assert.equal(walks.active,null);
+const savedWalks=new SB.Neighbors(walkGame);savedWalks.restore(walks.snapshot());assert.equal(savedWalks.completed,1);assert.equal(savedWalks.active,null);
+console.log('PASS: four playable challenges, solvable circuits, timing accuracy, single rewards, tuning isolation, upgrade economy, garage save validation and guided-walk lifecycle.');
 // Generate the distributable twice; check assets and byte-for-byte stability.
 execFileSync(process.execPath, ['build.js'], { cwd: ROOT, stdio: 'pipe' });
 const first = fs.readFileSync(path.join(ROOT, 'dist/sunset-bay.html'));

@@ -48,7 +48,8 @@
     p.dead = false;
     p.state = 'walk';
     p.role = ['Commuter', 'Courier', 'Medic', 'Tourist', 'Vendor', 'Mechanic', 'Reporter'][this.rng.int(0, 6)];
-    p.conversations = 0; p.trafficWait = 0;
+    p.conversations = 0; p.trafficWait = 0; p.followTarget = null; p.helped = false;
+    p.generation = (p.generation || 0) + 1;
     p.flee = 0;
     p.wait = 0;
     p.crossT = 0;
@@ -185,7 +186,7 @@
     var want = p.speedWant;
     // Once a pedestrian reaches a crossing, look for approaching traffic.
     // Query the existing traffic grid; never scan the city's entire fleet.
-    if (p.state === 'cross') {
+    if (p.state === 'cross' || (p.followTarget && p.state !== 'flee')) {
       p.trafficWait = Math.max(0, p.trafficWait - dt);
       var tr = this.game.traffic;
       if (tr && tr.grid) {
@@ -210,6 +211,9 @@
       var d = Math.hypot(dx, dz) || 1;
       tx = p.x + dx / d * 12;
       tz = p.z + dz / d * 12;
+    } else if (p.followTarget) {
+      tx = p.followTarget.x; tz = p.followTarget.z;
+      want = 2.9;
     } else if (p.state === 'cross') {
       tx = p.crossX; tz = p.crossZ;
       want = HURRY;

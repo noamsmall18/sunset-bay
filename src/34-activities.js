@@ -117,6 +117,7 @@
   Activities.prototype.select = function (course) {
     var g = this.game;
     if (g.deliveries && g.deliveries.active) { g.hud.toast('Finish or cancel your delivery before entering a race.'); return; }
+    if (g.neighbors && g.neighbors.active) { g.hud.toast('Finish or cancel your guided walk before entering a race.'); return; }
     if (g.missions.active) { g.hud.toast('Finish the story mission before starting a time trial.'); return; }
     this.active = { course: course, state: 'travel', checkpoint: 0, time: 0, countdown: 3 };
     this.setCheckpoint(0);
@@ -307,6 +308,14 @@
         'Travel between real businesses. Earn cash, early-delivery bonuses and local trust. Completed: ' + dispatch.completed,
         dispatch.active ? 'Manage delivery' : 'Find a delivery', function () { self.toggle(false, true); dispatch.menu(); }, '#78dfaa');
     }
+    if (this.game.pastimes) card('After hours', 'Hands-on orders, memory sequences, timing challenges and circuit puzzles. Beat your best, earn cash and complete local shifts.',
+      this.game.interiors.current ? 'Play here' : 'Find an activity', function () { self.toggle(false, true); self.game.pastimes.menu(); }, '#acb5ff');
+    // game.tuneShop, not game.garage: SB.Garage is the car park bay, which has
+    // no menu() and would throw the moment this card was tapped.
+    if (this.game.tuneShop) card('Bay Garage', 'Spend your earnings on permanent engine, brake and tire upgrades, repairs and five paint finishes. Park a car to begin.',
+      'Open garage', function () { self.toggle(false, true); self.game.tuneShop.menu(); }, '#efae77');
+    if (this.game.neighbors) card('Meet the neighbors', 'Help a tourist find a local business. Walk together for cash and trust. Completed walks: ' + this.game.neighbors.completed,
+      this.game.neighbors.active ? 'Manage walk' : 'Meet someone', function () { self.toggle(false, true); self.game.neighbors.menu(); }, '#ffdca6');
     this.courses.forEach(function (c) {
       var record = self.records[c.id];
       var text = c.detail + ' ' + (c.length / 1000).toFixed(1) + ' km · Gold ' + Math.round(c.gold) + 's';
