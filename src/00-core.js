@@ -137,7 +137,7 @@
   function Input(dom) {
     var self = this;
     this.keys = Object.create(null);
-    this.pressed = Object.create(null);   // edge-triggered, cleared each frame
+    this.pressed = Object.create(null);   // retained until a simulation tick consumes it
     this.mouse = { dx: 0, dy: 0, left: false, right: false, leftEdge: false, rightEdge: false, wheel: 0 };
     // Filled in by the touch layer; `enabled` stays false on desktop.
     this.touch = {
@@ -172,6 +172,7 @@
       // Dropping focus with keys held would otherwise stick the throttle on.
       self.keys = Object.create(null);
       self.mouse.left = self.mouse.right = false;
+      self.endTick();
     });
 
     dom.addEventListener('mousedown', function (e) {
@@ -296,14 +297,18 @@
     return false;
   };
 
-  // Called once at the end of every rendered frame.
-  Input.prototype.endFrame = function () {
+  // Simulation edges survive renders with no physics step and are delivered
+  // to exactly one tick, including when a slow frame catches up several ticks.
+  Input.prototype.endTick = function () {
     this.pressed = Object.create(null);
-    this.mouse.dx = 0; this.mouse.dy = 0; this.mouse.wheel = 0;
+    this.mouse.wheel = 0;
     this.mouse.leftEdge = false; this.mouse.rightEdge = false;
-    this.touch.look.dx = 0; this.touch.look.dy = 0;
     this.touch.hit = Object.create(null);
     this.touch.wheel = 0;
+  };
+  Input.prototype.endFrame = function () {
+    this.mouse.dx = 0; this.mouse.dy = 0;
+    this.touch.look.dx = 0; this.touch.look.dy = 0;
   };
   SB.Input = Input;
 
@@ -374,8 +379,7 @@
       self.acc += dt;
       var steps = 0;
       while (self.acc >= self.step && steps < self.maxSubSteps) {
-        self.onFixed(self.step, self.time);
-        self.time += self.step;
+        if (self.onFixed(self.step, self.time) !== false) self.time += self.step;
         self.acc -= self.step;
         steps++;
         self.frame++;

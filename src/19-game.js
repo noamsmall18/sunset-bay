@@ -35,6 +35,7 @@
       { label: 'Opening the roofs', fn: function () { self.stepRooftops(); } },
       { label: 'Furnishing interiors', fn: function () { self.stepInteriors(); } },
       { label: 'Waking the population', fn: function () { self.stepSystems(); } },
+      { label: 'Opening the waterfront', fn: function () { self.stepExpansion(); } },
       { label: 'Warming up', fn: function () { self.stepFinish(); } }
     ];
   };
@@ -61,6 +62,9 @@
     // Tone mapping is done by the post composite so the bloom threshold can
     // work on real HDR values; if post fails to build we turn it back on.
     renderer.toneMapping = THREE.NoToneMapping;
+    // Report the complete frame, including post passes, rather than only the
+    // final full-screen triangle. Reset once at the start of render().
+    renderer.info.autoReset = false;
     c.appendChild(renderer.domElement);
     renderer.domElement.id = 'view';
 
@@ -88,11 +92,17 @@
 
   Game.prototype.stepLayout = function () {
     this.layout = SB.Roads.build();
+    // The play area has to reach the islands, or the invisible wall stands
+    // between the causeway and the key it crosses to.
+    var westEdge = Math.min(this.layout.bounds.minX - 220,
+      (this.layout.seaMinX === undefined ? this.layout.bounds.minX : this.layout.seaMinX) - 40);
+    this.layout.playBounds = { minX: westEdge, maxX: this.layout.bounds.maxX + 60,
+      minZ: this.layout.bounds.minZ - 60, maxZ: this.layout.bounds.maxZ + 60 };
     this.world = new SB.World();
     this.world.beachX = this.layout.beachX;
     this.sky = new SB.Sky(this.scene, this.renderer);
     this.sky.world = this.world;
-    this.sky.setHour(9.2);
+    this.sky.setHour(17.6);
   };
 
   Game.prototype.stepTerrain = function () {
@@ -131,6 +141,9 @@
 
   Game.prototype.stepSystems = function () {
     if (SB.Audio) this.audio = new SB.Audio();
+    // Attached right after the audio graph exists, so stored volumes are in
+    // force before the first sound rather than after it.
+    if (SB.Settings) SB.Settings.attach(this);
     if (SB.Lights) this.lights = new SB.Lights(this);
     if (SB.Fx) this.fx = new SB.Fx(this);
     if (SB.Weather) this.weather = new SB.Weather(this);
@@ -156,9 +169,27 @@
     if (SB.Save) SB.Save.attach(this);
   };
 
+  Game.prototype.stepExpansion = function () {
+    // The islands go up before the waterfront so their helipad is registered
+    // by the time anything goes looking for somewhere to land.
+    if (SB.Islands && SB.Islands.Works) this.islands = new SB.Islands.Works(this);
+    // The fire service needs the city (something to burn) and traffic (an
+    // engine pool), so it goes up after both.
+    if (SB.Fires) this.fires = new SB.Fires(this);
+    if (SB.Coast) this.coast = new SB.Coast(this);
+    if (SB.Activities) this.activities = new SB.Activities(this);
+    if (SB.CityLife) this.cityLife = new SB.CityLife(this);
+    if (SB.Deliveries) this.deliveries = new SB.Deliveries(this);
+    // Constructed but NOT restored here. Restoring during world build ignored
+    // the title card: the player could pick "New game" and still start with
+    // the previous run's progress, because this had already put it back.
+    // 20-startup.js now restores it only when Continue is chosen.
+    if (SB.SaveGame) this.saveGame = new SB.SaveGame(this);
+  };
+
   Game.prototype.stepFinish = function () {
     var self = this;
-    if (SB.Post) {
+    if (SB.Post && SB.Q.settings.post) {
       try {
         this.post = new SB.Post(this.renderer, this.scene, this.camera);
       } catch (err) {
@@ -171,7 +202,7 @@
       this.renderer.toneMappingExposure = 1.22;
     }
     this.loop = new SB.Loop(1 / 60,
-      function (dt, t) { self.fixed(dt, t); },
+      function (dt, t) { return self.fixed(dt, t); },
       function (dt, alpha) { self.render(dt, alpha); });
     if (SB.Touch && SB.Q.touch) this.touch = new SB.Touch(this);
     SB.Q.apply(this);
@@ -182,6 +213,7 @@
 
   Game.prototype.setPaused = function (on) {
     this.paused = !!on;
+    if (this.paused && this.input) this.input.endTick();
     var el = document.getElementById('paused');
     if (el) el.classList.toggle('on', this.paused);
     if (this.audio) this.audio.setMuffled(this.paused);
@@ -197,13 +229,16 @@
   };
 
   Game.prototype.fixed = function (dt, t) {
-    if (this.paused) return;
+    if (this.paused) { this.input.endTick(); return false; }
     this.time = t;
     this.world.time = t;
     SB.Roads.updateLights(this.layout, t);
     if (this.weather && this.input.actHit('weather')) this.weather.cycle();
     if (this.weather) this.weather.fixed(dt);
+    if (this.deliveries) this.deliveries.fixed(dt);
+    if (this.cityLife) this.cityLife.fixed(dt);
     if (this.interiors) this.interiors.fixed(dt);
+    if (this.paused) { this.input.endTick(); return false; }
     if (this.player) this.player.fixed(dt);
     if (this.traffic) this.traffic.fixed(dt);
     if (this.boats) this.boats.fixed(dt);
@@ -217,10 +252,16 @@
     if (this.progress) this.progress.fixed(dt);
     if (this.garage) this.garage.fixed(dt);
     if (this.rhythm) this.rhythm.fixed(dt);
+    if (this.activities) this.activities.fixed(dt);
+    if (this.fires) this.fires.fixed(dt);
+    if (this.saveGame) this.saveGame.fixed(dt);
     if (SB.Save && SB.Save.tick) SB.Save.tick(dt);
+    this.input.endTick();
   };
 
   Game.prototype.render = function (dt, alpha) {
+    if (this.paused || !this.started) dt = 0;
+    this.renderer.info.reset();
     SB._game = this;
     var cam = this.camera;
     if (this.player) this.player.render(dt, cam);
@@ -246,6 +287,12 @@
     if (this.missions) this.missions.render(dt);
     if (this.fx) this.fx.render(dt);
     if (this.audio) this.audio.render(dt, this);
+    if (this.coast) this.coast.render(dt, lamps);
+    if (this.islands) this.islands.render(dt);
+    if (this.fires) this.fires.render(dt);
+    if (this.activities) this.activities.render(dt);
+    if (this.cityLife) this.cityLife.render(dt);
+    if (this.deliveries) this.deliveries.render(dt);
 
     // city windows light up after dark
     for (var i = 0; i < this.city.emissiveTargets.length; i++) {
@@ -358,6 +405,10 @@
       }
       if (boundaryCount !== 4) issues.push('map boundary board is incomplete (' + boundaryCount + '/4)');
       if (this.interiors) {
+        // Development-only exhaustive coverage; normal play builds on entry.
+        for (var rbuild = 0; rbuild < this.interiors.rooms.length; rbuild++) {
+          this.interiors.ensureRoom(this.interiors.rooms[rbuild]);
+        }
         var names = Object.create(null);
         var multiLevel = 0, banks = 0, hotspotTotal = 0, generatedRooms = 0;
         var generatedArchetypes = Object.create(null);
@@ -717,6 +768,218 @@
       if (brokenLinks) issues.push('routing returned ' + brokenLinks + ' paths with a non-existent hop');
       if (suboptimal) issues.push('routing returned ' + suboptimal + ' paths that are not cost-optimal');
 
+      // ---- road network: one map, drawn once -------------------------------
+      // Three properties that used to be false. The graph has to be a single
+      // component, or a district is unreachable and anything spawned there is
+      // stranded. Ground roads must not be buried under other ground roads -
+      // two carriageways occupying the same tarmac is what made the map look
+      // smeared, and it was true of 38% of the edges. And the blocks left
+      // between the roads have to be real ground rather than slivers: the
+      // isoperimetric ratio catches a long thin scrap that no pavement fits on.
+      var seenN = new Uint8Array(L.nodes.length);
+      var stackN = [0], reachedN = 1;
+      seenN[0] = 1;
+      while (stackN.length) {
+        var curN = stackN.pop();
+        var ndN = L.nodes[curN];
+        for (var eN = 0; eN < ndN.edges.length; eN++) {
+          var edN = L.edges[ndN.edges[eN]];
+          var othN = edN.a === curN ? edN.b : edN.a;
+          if (!seenN[othN]) { seenN[othN] = 1; reachedN++; stackN.push(othN); }
+        }
+      }
+      if (reachedN !== L.nodes.length) {
+        issues.push('road graph is in pieces: ' + reachedN + ' of ' + L.nodes.length + ' nodes reachable');
+      }
+
+      var buriedE = 0, groundE = 0, rq = [], rs = 1;
+      for (var bi2 = 0; bi2 < L.edges.length; bi2++) {
+        var EA = L.edges[bi2];
+        if (EA.elevated) continue;
+        groundE++;
+        var ea0 = L.nodes[EA.a], eb0 = L.nodes[EA.b];
+        var nearE = L.edgeGrid.query(
+          Math.min(ea0.x, eb0.x) - 30, Math.min(ea0.z, eb0.z) - 30,
+          Math.max(ea0.x, eb0.x) + 30, Math.max(ea0.z, eb0.z) + 30, rq, rs++);
+        for (var nj = 0; nj < nearE.length; nj++) {
+          var EB = nearE[nj];
+          if (EB.id === EA.id || EB.elevated) continue;
+          if (EA.a === EB.a || EA.a === EB.b || EA.b === EB.a || EA.b === EB.b) continue;
+          var ec0 = L.nodes[EB.a], ed0 = L.nodes[EB.b];
+          var cosE = Math.abs(Math.cos(
+            Math.atan2(eb0.z - ea0.z, eb0.x - ea0.x) -
+            Math.atan2(ed0.z - ec0.z, ed0.x - ec0.x)));
+          if (cosE < 0.985) continue;
+          var emx = (ea0.x + eb0.x) * 0.5, emz = (ea0.z + eb0.z) * 0.5;
+          var edx = ed0.x - ec0.x, edz = ed0.z - ec0.z;
+          var el2 = edx * edx + edz * edz;
+          if (el2 < 1e-6) continue;
+          var et = SB.M.clamp(((emx - ec0.x) * edx + (emz - ec0.z) * edz) / el2, 0, 1);
+          if (SB.M.dist(ec0.x + edx * et, ec0.z + edz * et, emx, emz) <
+              (EA.width + EB.width) * 0.5) { buriedE++; break; }
+        }
+      }
+      if (groundE && buriedE / groundE > 0.20) {
+        issues.push('road network: ' + Math.round(100 * buriedE / groundE) +
+          '% of ground roads are buried under another road');
+      }
+
+      var sliverB = 0;
+      for (var sb = 0; sb < L.blocks.length; sb++) {
+        var spoly = L.blocks[sb].kerbPoly || L.blocks[sb].poly;
+        if (!spoly || spoly.length < 3) continue;
+        var s2 = 0, sper = 0;
+        for (var sk = 0; sk < spoly.length; sk++) {
+          var sp = spoly[sk], sq2 = spoly[(sk + 1) % spoly.length];
+          s2 += sp.x * sq2.z - sq2.x * sp.z;
+          sper += SB.M.dist(sp.x, sp.z, sq2.x, sq2.z);
+        }
+        var sarea = Math.abs(s2) * 0.5;
+        if (sper > 0 && (4 * Math.PI * sarea) / (sper * sper) < 0.12) sliverB++;
+      }
+      if (L.blocks.length && sliverB / L.blocks.length > 0.14) {
+        issues.push('road network: ' + Math.round(100 * sliverB / L.blocks.length) +
+          '% of blocks are slivers');
+      }
+
+      // ---- islands: land, reachable, and pointed at by the missions --------
+      // The offshore chain is authored, and authored coordinates rot. Three
+      // checks, all of which would have caught a mistake I made writing them:
+      // the islands have to be dry land where the height field agrees, the
+      // causeway has to actually connect Pelican Key to the city road graph,
+      // and every island mission stage has to land on the kind of surface it
+      // asks for - drive and goto on ground, sail on water deep enough to
+      // float a boat.
+      if (SB.Islands && this.islands) {
+        var isles = SB.Islands.LIST;
+        for (var il = 0; il < isles.length; il++) {
+          var isle = isles[il];
+          var ih = this.world.baseHeight(isle.x, isle.z);
+          if (ih < this.world.waterY + 2) {
+            issues.push(isle.name + ' is underwater at its centre (' + ih.toFixed(1) + 'm)');
+          }
+          // and it has to be an island: sea all the way round it
+          var wet = 0;
+          for (var ia = 0; ia < 8; ia++) {
+            var ang = (ia / 8) * Math.PI * 2;
+            var ox = isle.x + Math.cos(ang) * isle.r * 1.34;
+            var oz = isle.z + Math.sin(ang) * isle.r * 1.34;
+            if (this.world.baseHeight(ox, oz) < this.world.waterY - 0.5) wet++;
+          }
+          if (wet < 7) issues.push(isle.name + ' is joined to something: only ' + wet + '/8 bearings are sea');
+        }
+
+        // Pelican Key drives: a road node on the key has to route to downtown.
+        var keyIsle = SB.Islands.byId('pelican');
+        var keyNode = Rd.nearestNode(L, keyIsle.x, keyIsle.z);
+        var townNode = Rd.nearestNode(L, 0, 0);
+        var keyPath = Rd.findPath(L, keyNode.id, townNode.id);
+        if (!keyPath || keyPath.length < 2) {
+          issues.push('Pelican Key is not reachable by road - the causeway did not weld');
+        }
+
+        var islandStages = { 'the-causeway': 1, 'gull-rock-light': 1, 'mercy-point': 1 };
+        var chain = SB.Missions.CHAIN || [];
+        for (var mi = 0; mi < chain.length; mi++) {
+          if (!islandStages[chain[mi].id]) continue;
+          var sts = chain[mi].stages;
+          for (var si = 0; si < sts.length; si++) {
+            var st2 = sts[si];
+            if (st2.x === undefined) continue;
+            var gh = this.world.baseHeight(st2.x, st2.z);
+            if (st2.type === 'sail') {
+              if (gh > this.world.waterY - 1.0) {
+                issues.push(chain[mi].id + ' stage ' + si + ' asks you to sail onto dry land');
+              }
+            } else if (st2.type === 'drive' || st2.type === 'goto' || st2.type === 'pickup') {
+              if (gh < this.world.waterY + 0.3) {
+                issues.push(chain[mi].id + ' stage ' + si + ' points at open water');
+              }
+              if (st2.type === 'drive') {
+                var dn = Rd.nearestNode(L, st2.x, st2.z);
+                if (SB.M.dist(dn.x, dn.z, st2.x, st2.z) > (st2.r || 10) + 26) {
+                  issues.push(chain[mi].id + ' stage ' + si + ' has no road within reach');
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // ---- fire: it burns, it spreads, and somebody comes ------------------
+      // The fire service is the first system here that both simulates and
+      // drives, so it gets probed on both halves. Every fire started by this
+      // block is put out again before the probe returns - a self test that
+      // leaves the city alight is worse than no self test.
+      if (this.fires) {
+        var FR = this.fires;
+        var priorFires = FR.list.length;
+        if (!FR.station) issues.push('fire station was not built');
+        else {
+          var stY = this.world.baseHeight(FR.station.apron.x, FR.station.apron.z);
+          if (!isFinite(stY)) issues.push('fire station apron is not on the ground');
+          if (FR.engines.length < 1) issues.push('fire service has no engines');
+        }
+
+        var probeB = FR.pickBuilding(0);
+        var probeFire = probeB ? FR.igniteBuilding(probeB, { forced: true }) : null;
+        if (!probeFire) issues.push('could not start a probe fire');
+        else {
+          // it grows
+          var i0 = probeFire.intensity;
+          for (var fs = 0; fs < 120; fs++) FR.fixed(1 / 60);
+          if (probeFire.out || probeFire.intensity <= i0) {
+            issues.push('a fire with fuel did not grow');
+          }
+          // the hose is aimed, not sprayed in a circle
+          var fx0 = probeFire.x, fz0 = probeFire.z;
+          var beforeI = probeFire.intensity;
+          FR.douse(fx0 - 12, probeFire.y, fz0, -1, 0, 26, 1.0, 0.5);
+          if (probeFire.intensity < beforeI - 1e-6) {
+            issues.push('the hose puts out fires it is pointed away from');
+          }
+          FR.douse(fx0 - 12, probeFire.y, fz0, 1, 0, 26, 1.0, 0.5);
+          if (probeFire.intensity >= beforeI) {
+            issues.push('the hose does nothing to a fire it is pointed at');
+          }
+          // an engine takes the call and stages on a road
+          var claimed = false;
+          for (var fe = 0; fe < FR.engines.length; fe++) {
+            if (FR.engines[fe].call) claimed = true;
+          }
+          if (!claimed) issues.push('no engine was dispatched to a fire');
+          var stage = FR.stagingPoint(probeFire);
+          if (SB.Roads.onRoad(this.layout, stage.x, stage.z) === false) {
+            issues.push('an engine would stage off the road');
+          }
+        }
+
+        // Spread is bounded. Filling the list to the ceiling must stop it
+        // dead: unbounded spread is exponential, and the first version of
+        // this took one building to the whole cap inside a minute.
+        var filler = [];
+        while (FR.list.length < 8) {
+          var fb = FR.pickBuilding(0);
+          if (!fb) break;
+          var made = FR.igniteBuilding(fb, { forced: true });
+          if (!made) break;
+          filler.push(made);
+        }
+        if (FR.list.length >= 8) {
+          var beforeN = FR.list.length;
+          var hot = FR.list[0];
+          hot.intensity = 1; hot.fuel = 200; hot.spreads = 0; hot.generation = 0;
+          for (var sp = 0; sp < 40; sp++) FR.trySpread(hot);
+          if (FR.list.length > beforeN) {
+            issues.push('fire spread past its ceiling (' + FR.list.length + ' burning)');
+          }
+        }
+
+        // Put the city out again.
+        while (FR.list.length > priorFires) FR.extinguish(FR.list[FR.list.length - 1]);
+        for (var ce = 0; ce < FR.engines.length; ce++) FR.engines[ce].call = null;
+      }
+
       // ---- contracts: every generated job must be runnable -----------------
       if (this.missions && this.progress && SB.Missions.CONTRACT_TYPES) {
         var savedXp = this.progress.xp, savedUnlocked = this.progress.unlocked;
@@ -882,6 +1145,50 @@
         cams.setMode(startMode);
       }
 
+      // ---- settings: clamping, persistence and live audio ------------------
+      // The game shipped with no volume control at all, so the risk worth
+      // guarding is not "a slider looks wrong" but "a stored value silently
+      // leaves the player with no audio and no way to see why".
+      if (SB.Settings) {
+        var St = SB.Settings;
+        var keptSettings = JSON.parse(JSON.stringify(St.values));
+
+        // Anything that is not a finite number in range must fall back to the
+        // default rather than reaching a gain node.
+        var junk = St.sanitize({
+          volMaster: 'loud', volEffects: 99, volMusic: -5, muted: true,
+          lookSpeed: NaN, hudScale: null, notASetting: 7
+        });
+        if (junk.volMaster !== St.DEFS.volMaster[0]) issues.push('settings: a non-numeric volume was not rejected');
+        if (junk.volEffects !== 1) issues.push('settings: an out-of-range volume was not clamped');
+        if (junk.volMusic !== 0) issues.push('settings: a negative volume was not clamped');
+        if (junk.muted !== 1) issues.push('settings: a boolean was not coerced');
+        if (junk.lookSpeed !== St.DEFS.lookSpeed[0]) issues.push('settings: NaN look speed was not rejected');
+        if ('notASetting' in junk) issues.push('settings: an unknown key survived sanitising');
+
+        // The read-side helpers are what the player, camera, HUD and post
+        // pipeline actually consult.
+        St.values.invertY = 1; St.values.reduceMotion = 1;
+        St.values.lookSpeed = 2; St.values.hudScale = 1.25;
+        if (St.lookInvertY() !== -1) issues.push('settings: invertY does not invert');
+        if (St.motionScale() !== 0) issues.push('settings: reduceMotion does not zero motion');
+        if (St.lookScale() !== 2) issues.push('settings: lookScale does not report the setting');
+        if (St.hudScale() !== 1.25) issues.push('settings: hudScale does not report the setting');
+
+        // Muting has to reach the master gain, not just the checkbox.
+        if (this.audio && this.audio.ready) {
+          St.values.muted = 1; St.values.volMaster = 0.8;
+          St.apply();
+          var target = this.audio.master.gain.value;
+          // setTargetAtTime ramps, so read the scheduled target rather than
+          // the instantaneous value where the browser exposes it.
+          if (target > 0.85) issues.push('settings: mute did not move the master gain');
+        }
+
+        St.values = keptSettings;
+        St.apply();
+      }
+
       // ---- save: capture and re-apply must be lossless ---------------------
       if (SB.Save && this.player) {
         var snap = SB.Save.capture(this);
@@ -913,7 +1220,7 @@
         ' building doors, ' + this.interiors.rooms.length + ' unique furnished interiors, ' +
         generatedRooms + ' generated variants, ' + hotspotTotal + ' interior hotspots, ' +
         'multi-level/bank/vehicle/car-stability/boat/plane/heli/routing/contract/' +
-        'garage/damage/rhythm/camera/save probes clean)');
+        'garage/damage/rhythm/camera/settings/save/road-network/island/fire probes clean)');
     }
     this.selfTestIssues = issues;
   };

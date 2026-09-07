@@ -88,6 +88,9 @@
         }
         x = door.x; z = door.z; yaw = door.yaw;
         debugSpawn = true;
+      } else if (this.game.dev && location.hash.indexOf('spawn=boardwalk') >= 0) {
+        x = this.game.layout.beachX + 12; z = 405; yaw = Math.PI;
+        debugSpawn = true;
       } else if (this.game.dev && location.hash.indexOf('spawn=airport') >= 0) {
         x = -312; z = -476; yaw = Math.PI;
         debugSpawn = true;
@@ -757,9 +760,13 @@
     // --- look, from the mouse or from a drag on the right of the screen
     if (input.ready() && !this.game.uiBlocking && !this.game.paused) {
       var ld = input.lookDelta(_look);
-      var sens = 0.0021 * (this.aiming ? 0.62 : 1);
+      // Sensitivity and vertical inversion are player settings, not
+      // constants. Aiming still slows the look by the same proportion.
+      var sens = 0.0021 * (this.aiming ? 0.62 : 1) *
+        (SB.Settings ? SB.Settings.lookScale() : 1);
+      var invert = SB.Settings ? SB.Settings.lookInvertY() : 1;
       this.camYaw = M.wrapAngle(this.camYaw + ld.x * sens);
-      this.camPitch = M.clamp(this.camPitch - ld.y * sens, -1.15, 0.95);
+      this.camPitch = M.clamp(this.camPitch - ld.y * sens * invert, -1.15, 0.95);
       if (Math.abs(ld.x) + Math.abs(ld.y) > 0.5) this.freeLook = 1.6;
     }
     this.freeLook = Math.max(0, this.freeLook - dt);
@@ -813,8 +820,11 @@
     camera.updateProjectionMatrix();
 
     this.shake = Math.max(0, this.shake - dt * 1.6);
-    if (this.shake > 0.001) {
-      var s = this.shake * 0.32;
+    // Reduced motion zeroes the shake amplitude but still decays the value,
+    // so nothing downstream that reads `shake` sees it stick at a high number.
+    var motion = SB.Settings ? SB.Settings.motionScale() : 1;
+    if (this.shake > 0.001 && motion > 0) {
+      var s = this.shake * 0.32 * motion;
       camera.position.x += (Math.random() - 0.5) * s;
       camera.position.y += (Math.random() - 0.5) * s;
       camera.position.z += (Math.random() - 0.5) * s;

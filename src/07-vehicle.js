@@ -116,6 +116,19 @@
       brake: 17500, maxSteer: 0.50, muF: 1.18, muR: 1.22, drag: 0.78, topHint: 48,
       bodyH: 1.26, roofH: 0.96, seats: 6, cls: 'armored', tall: true, boxy: true,
       armor: true, ability: 'detonator', abilityLabel: 'IMPACT CHARGE', abilityDuration: 4.0, abilityCooldown: 10
+    },
+    // Not in TRAFFIC_TYPES: an engine only ever appears because the fire
+    // service sent one, or because you took one off the forecourt. It carries
+    // no `ability` - the deck gun is held rather than triggered, so the fire
+    // module reads the key itself instead of going through the one-shot
+    // ability path.
+    fire: {
+      name: 'SBFD Engine 12', mass: 8600, len: 7.30, wid: 2.42, wheelbase: 4.20,
+      cgFront: 1.95, cgH: 1.06, wheelR: 0.52, track: 2.00,
+      torque: 1900, redline: 3400, gears: [4.60, 2.80, 1.82, 1.26, 0.94], final: 4.60,
+      brake: 30000, maxSteer: 0.46, muF: 1.06, muR: 1.10, drag: 1.24, topHint: 40,
+      bodyH: 1.52, roofH: 1.02, seats: 3, cls: 'fire', boxy: true, tall: true,
+      emergency: true
     }
   };
 

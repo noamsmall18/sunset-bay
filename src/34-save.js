@@ -104,7 +104,8 @@
         weather: game.weather ? game.weather.mode : 'sun'
       },
       progress: game.progress ? game.progress.serialize() : null,
-      garage: game.garage ? game.garage.serialize() : null
+      garage: game.garage ? game.garage.serialize() : null,
+      fire: game.fires ? game.fires.serialize() : null
     };
   };
 
@@ -177,6 +178,10 @@
 
     if (game.progress && data.progress) game.progress.restore(data.progress);
     if (game.garage && data.garage) game.garage.restore(data.garage);
+    // Fires themselves are not saved - a city that is still alight when you
+    // load is a city you did not leave alight - but the tally of calls you
+    // have run is part of the run.
+    if (game.fires && data.fire) game.fires.restore(data.fire);
     game.bus.emit('gameLoaded', data);
     return true;
   };

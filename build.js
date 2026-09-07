@@ -8,7 +8,8 @@ const path = require('path');
 const ROOT = __dirname;
 const SRC = path.join(ROOT, 'src');
 const OUT = path.join(ROOT, 'dist', 'sunset-bay.html');
-const THREE_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.1/three.min.js';
+const crypto = require('crypto');
+const three = fs.readFileSync(path.join(ROOT, 'vendor', 'three.min.js'), 'utf8');
 
 const files = fs.readdirSync(SRC).filter(f => f.endsWith('.js')).sort();
 if (!files.length) { console.error('no source files'); process.exit(1); }
@@ -33,22 +34,22 @@ if (/<\/script/i.test(bundle)) {
 // NOTE: the replacement MUST be a function. With a string replacement, `$'`
 // and friends are treated as substitution patterns, and the sources contain
 // `'-$'` (in formatMoney), which silently truncates the inlined bundle.
-const html = shell
-  .replace('<!--THREE-->', () => `<script src="${THREE_CDN}"></script>`)
+const documentShell = '<!doctype html>\n<html lang="en">\n<meta charset="utf-8">\n' + shell + '\n</html>\n';
+const html = documentShell
+  .replace('<!--THREE-->', () => `<script>\n${three}\n</script>`)
   .replace('<!--BUNDLE-->', () => `<script>\n${bundle}\n</script>`);
 
 fs.mkdirSync(path.dirname(OUT), { recursive: true });
 fs.writeFileSync(OUT, html);
+fs.writeFileSync(path.join(path.dirname(OUT), 'index.html'), html);
+fs.cpSync(path.join(ROOT, 'assets'), path.join(path.dirname(OUT), 'assets'), { recursive: true });
 
 // Dev page: same shell, but scripts stay separate so stack traces point at the
 // real file and line. Uses a vendored three so it works offline.
-const stamp = Date.now();
+const stamp = crypto.createHash('sha256').update(bundle + shell + three).digest('hex').slice(0, 12);
 const devScripts = ['vendor/three.min.js', ...files.map(f => 'src/' + f)]
   .map(s => `<script src="${s}?v=${stamp}"></script>`).join('\n');
-const dev = '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n' +
-  '<meta name="viewport" content="width=device-width,initial-scale=1">\n' +
-  shell.replace('<!--THREE-->', () => '').replace('<!--BUNDLE-->', () => devScripts) +
-  '\n</html>\n';
+const dev = documentShell.replace('<!--THREE-->', () => '').replace('<!--BUNDLE-->', () => devScripts);
 fs.writeFileSync(path.join(ROOT, 'index.html'), dev);
 
 // Sanity check: every module must survive into the page intact. This caught a
