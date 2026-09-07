@@ -1383,11 +1383,19 @@
     L.landmarks = {
       garage: pickBlock(L, -150, 150, 'buildings'),
       stadium: pickBlock(L, 430, 300, null),
-      park: pickBlock(L, 60, 40, null)
+      park: pickBlock(L, 60, 40, null),
+      // The fire station needs a block of its own with a street on it: an
+      // apparatus bay that opens onto somebody's back garden is no use when
+      // the engines have to get out in seconds.
+      firehouse: pickBlock(L, -330, -110, 'buildings')
     };
     if (L.landmarks.garage) L.landmarks.garage.kind = 'garage';
     if (L.landmarks.stadium) L.landmarks.stadium.kind = 'stadium';
     if (L.landmarks.park) L.landmarks.park.kind = 'park';
+    // 'firehouse' is not a kind the city builder knows, which is the point:
+    // it skips anything that is not 'buildings', so the block comes out as
+    // open paved ground for the fire module to build on.
+    if (L.landmarks.firehouse) L.landmarks.firehouse.kind = 'firehouse';
 
     // ---- edge lookup grid, for "am I on a road" tests
     // Anything flying over the city - freeway decks, ramps, the elevated

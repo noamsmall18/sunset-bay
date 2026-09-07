@@ -173,6 +173,9 @@
     // The islands go up before the waterfront so their helipad is registered
     // by the time anything goes looking for somewhere to land.
     if (SB.Islands && SB.Islands.Works) this.islands = new SB.Islands.Works(this);
+    // The fire service needs the city (something to burn) and traffic (an
+    // engine pool), so it goes up after both.
+    if (SB.Fires) this.fires = new SB.Fires(this);
     if (SB.Coast) this.coast = new SB.Coast(this);
     if (SB.Activities) this.activities = new SB.Activities(this);
     if (SB.CityLife) this.cityLife = new SB.CityLife(this);
@@ -250,6 +253,7 @@
     if (this.garage) this.garage.fixed(dt);
     if (this.rhythm) this.rhythm.fixed(dt);
     if (this.activities) this.activities.fixed(dt);
+    if (this.fires) this.fires.fixed(dt);
     if (this.saveGame) this.saveGame.fixed(dt);
     if (SB.Save && SB.Save.tick) SB.Save.tick(dt);
     this.input.endTick();
@@ -285,6 +289,7 @@
     if (this.audio) this.audio.render(dt, this);
     if (this.coast) this.coast.render(dt, lamps);
     if (this.islands) this.islands.render(dt);
+    if (this.fires) this.fires.render(dt);
     if (this.activities) this.activities.render(dt);
     if (this.cityLife) this.cityLife.render(dt);
     if (this.deliveries) this.deliveries.render(dt);
@@ -901,6 +906,80 @@
         }
       }
 
+      // ---- fire: it burns, it spreads, and somebody comes ------------------
+      // The fire service is the first system here that both simulates and
+      // drives, so it gets probed on both halves. Every fire started by this
+      // block is put out again before the probe returns - a self test that
+      // leaves the city alight is worse than no self test.
+      if (this.fires) {
+        var FR = this.fires;
+        var priorFires = FR.list.length;
+        if (!FR.station) issues.push('fire station was not built');
+        else {
+          var stY = this.world.baseHeight(FR.station.apron.x, FR.station.apron.z);
+          if (!isFinite(stY)) issues.push('fire station apron is not on the ground');
+          if (FR.engines.length < 1) issues.push('fire service has no engines');
+        }
+
+        var probeB = FR.pickBuilding(0);
+        var probeFire = probeB ? FR.igniteBuilding(probeB, { forced: true }) : null;
+        if (!probeFire) issues.push('could not start a probe fire');
+        else {
+          // it grows
+          var i0 = probeFire.intensity;
+          for (var fs = 0; fs < 120; fs++) FR.fixed(1 / 60);
+          if (probeFire.out || probeFire.intensity <= i0) {
+            issues.push('a fire with fuel did not grow');
+          }
+          // the hose is aimed, not sprayed in a circle
+          var fx0 = probeFire.x, fz0 = probeFire.z;
+          var beforeI = probeFire.intensity;
+          FR.douse(fx0 - 12, probeFire.y, fz0, -1, 0, 26, 1.0, 0.5);
+          if (probeFire.intensity < beforeI - 1e-6) {
+            issues.push('the hose puts out fires it is pointed away from');
+          }
+          FR.douse(fx0 - 12, probeFire.y, fz0, 1, 0, 26, 1.0, 0.5);
+          if (probeFire.intensity >= beforeI) {
+            issues.push('the hose does nothing to a fire it is pointed at');
+          }
+          // an engine takes the call and stages on a road
+          var claimed = false;
+          for (var fe = 0; fe < FR.engines.length; fe++) {
+            if (FR.engines[fe].call) claimed = true;
+          }
+          if (!claimed) issues.push('no engine was dispatched to a fire');
+          var stage = FR.stagingPoint(probeFire);
+          if (SB.Roads.onRoad(this.layout, stage.x, stage.z) === false) {
+            issues.push('an engine would stage off the road');
+          }
+        }
+
+        // Spread is bounded. Filling the list to the ceiling must stop it
+        // dead: unbounded spread is exponential, and the first version of
+        // this took one building to the whole cap inside a minute.
+        var filler = [];
+        while (FR.list.length < 8) {
+          var fb = FR.pickBuilding(0);
+          if (!fb) break;
+          var made = FR.igniteBuilding(fb, { forced: true });
+          if (!made) break;
+          filler.push(made);
+        }
+        if (FR.list.length >= 8) {
+          var beforeN = FR.list.length;
+          var hot = FR.list[0];
+          hot.intensity = 1; hot.fuel = 200; hot.spreads = 0; hot.generation = 0;
+          for (var sp = 0; sp < 40; sp++) FR.trySpread(hot);
+          if (FR.list.length > beforeN) {
+            issues.push('fire spread past its ceiling (' + FR.list.length + ' burning)');
+          }
+        }
+
+        // Put the city out again.
+        while (FR.list.length > priorFires) FR.extinguish(FR.list[FR.list.length - 1]);
+        for (var ce = 0; ce < FR.engines.length; ce++) FR.engines[ce].call = null;
+      }
+
       // ---- contracts: every generated job must be runnable -----------------
       if (this.missions && this.progress && SB.Missions.CONTRACT_TYPES) {
         var savedXp = this.progress.xp, savedUnlocked = this.progress.unlocked;
@@ -1141,7 +1220,7 @@
         ' building doors, ' + this.interiors.rooms.length + ' unique furnished interiors, ' +
         generatedRooms + ' generated variants, ' + hotspotTotal + ' interior hotspots, ' +
         'multi-level/bank/vehicle/car-stability/boat/plane/heli/routing/contract/' +
-        'garage/damage/rhythm/camera/settings/save/road-network/island probes clean)');
+        'garage/damage/rhythm/camera/settings/save/road-network/island/fire probes clean)');
     }
     this.selfTestIssues = issues;
   };

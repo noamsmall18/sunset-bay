@@ -279,6 +279,7 @@
     var g = this.game, places = [], L = g.layout;
     if (g.activities) places = places.concat(g.activities.places());
     if (g.islands) places = places.concat(g.islands.landmarks);
+    if (g.fires) places = places.concat(g.fires.places());
     var mission = this.missionPlace();
     if (mission) places.push(mission);
     // A contract you can see on the radar but not route to is a contract you
